@@ -8,3 +8,7 @@
 .venv/
 env/
 venv/
+
+WareHouse
+scripts
+tmp
