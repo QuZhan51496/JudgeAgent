@@ -18,6 +18,9 @@ import camel.messages
 import camel.prompts
 import camel.typing
 import camel.utils
+import camel.dev_graph
+import camel.exceptions
+import camel.schema
 
 __version__ = '0.1.0'
 
