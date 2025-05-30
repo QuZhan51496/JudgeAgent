@@ -17,6 +17,9 @@ from typing import Dict, Optional
 from camel.messages import BaseMessage
 from camel.typing import RoleType
 
+from dataclasses import field
+from typing import Dict, List, Optional
+
 try:
     from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
     from openai.types.chat.chat_completion_message import FunctionCall
@@ -48,6 +51,7 @@ class ChatMessage(BaseMessage):
     content: str = ""
     refusal: str = None
     audio: object = None
+    annotations: List = field(default_factory=list)
     if openai_new_api:
         function_call: Optional[FunctionCall] = None
         tool_calls: Optional[ChatCompletionMessageToolCall] = None
@@ -87,6 +91,7 @@ class AssistantChatMessage(ChatMessage):
     content: str = ""
     refusal: str = None
     audio: object = None
+    annotations: List = field(default_factory=list)
 
 
 @dataclass
@@ -111,3 +116,4 @@ class UserChatMessage(ChatMessage):
     content: str = ""
     refusal: str = None
     audio: object = None
+    annotations: List = field(default_factory=list)
