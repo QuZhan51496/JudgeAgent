@@ -179,7 +179,7 @@ Requirements:
 5. When a brick has 0 life, it will disappear. 
 6. Game start setting: Once left or right arrow key is pressed, the game starts. Bricks are arranged on the top of the game window, and the paddle is placed at the bottom of the game window.
 7. As the game starts, the ball will be launched from the center of the game window and move upwards to the bricks.
-7. As the game starts, a log file named 'game.log' should be created to record the game's progress. Each log entry should follow this format:
+8. As the game starts, a log file named 'game.log' should be created to record the game's progress. Each log entry should follow this format:
 {
     "timestamp": timestamp,
     "EVENT_TYPE": "PADDLE_MOVE_LEFT" | "PADDLE_MOVE_RIGHT" | "BOUNCE_WALL" | "BOUNCE_PADDLE" | "BOUNCE_BRICK" | "BALL_LOST",
@@ -189,7 +189,7 @@ Requirements:
 }
     Note: - bricks_info contains the x coordinate, y coordinate, and remaining life for all bricks. If the brick has 0 life, it's info should be [null, null, 0]
           - If a brick splits, it's bricks_info should change from [brickn_x, brickn_y, brickn_life] to [[brickn1_x, brickn1_y, brickn1_life], [brickn2_x, brickn2_y, brickn2_life]] where brickn represents the original brick.
-8. The game ends when the ball falls off the screen.
+9. The game ends when the ball falls off the screen.
 """},
 
     {
