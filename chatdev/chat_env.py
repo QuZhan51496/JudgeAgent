@@ -54,6 +54,7 @@ class ChatEnv:
         self.config = chat_env_config
         self.roster: Roster = Roster()
         self.codes: Codes = Codes()
+        self.unit_test_codes: Codes = Codes()
         self.memory: Memory = Memory()
         self.proposed_images: Dict[str, str] = {}
         self.incorporated_images: Dict[str, str] = {}
@@ -83,6 +84,7 @@ class ChatEnv:
         assert len(self.env_dict['directory']) == 0
         self.env_dict['directory'] = directory
         self.codes.directory = directory
+        self.unit_test_codes.directory = directory
         self.requirements.directory = directory
         self.manuals.directory = directory
 
@@ -92,10 +94,12 @@ class ChatEnv:
             print("{} Copied to {}".format(directory, new_directory))
         if os.path.exists(self.env_dict['directory']):
             shutil.rmtree(self.env_dict['directory'])
-            os.mkdir(self.env_dict['directory'])
+            # os.mkdir(self.env_dict['directory'])
+            os.makedirs(self.env_dict['directory'], exist_ok=True)
             print("{} Created".format(directory))
         else:
-            os.mkdir(self.env_dict['directory'])
+            # os.mkdir(self.env_dict['directory'])
+            os.makedirs(self.env_dict['directory'], exist_ok=True)
     
     def init_memory(self):
         self.memory.id_enabled = True
@@ -156,6 +160,40 @@ class ChatEnv:
 
         return False, success_info
 
+    def run_test_code(self, test_filename) -> tuple[bool, str]:
+        directory = self.env_dict['directory']
+        success_info = "The software run successfully without errors."
+        
+        try:
+            command = ["python", test_filename]
+            
+            process = subprocess.Popen(
+                command,
+                cwd=directory,
+                preexec_fn=None if os.name == 'nt' else os.setsid,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()  # Kill the process if it times out
+                stdout, stderr = process.communicate()
+            stdout = stdout.decode('utf-8')
+            stderr = stderr.decode('utf-8')
+            
+            if stderr and "Traceback" in stderr:
+                return True, stderr.replace(directory + "/", "")
+            
+            if "FAILED" in stdout or "failures=" in stdout and not "failures=0" in stdout:
+                return True, stdout.replace(directory + "/", "")
+            
+            return False, success_info
+            
+        except Exception as ex:
+            return True, f"An error occurred: {ex}"
+
     def recruit(self, agent_name: str):
         self.roster._recruit(agent_name)
 
@@ -168,11 +206,23 @@ class ChatEnv:
     def update_codes(self, generated_content):
         self.codes._update_codes(generated_content)
 
+    def update_unit_test_codes(self, generated_content):
+        self.unit_test_codes._update_codes(generated_content)
+
     def rewrite_codes(self, phase_info=None) -> None:
         self.codes._rewrite_codes(self.config.git_management, phase_info)
 
+    def rewrite_unit_test_codes(self, phase_info=None) -> None:
+        self.unit_test_codes._rewrite_codes(self.config.git_management, phase_info)
+
     def get_codes(self) -> str:
         return self.codes._get_codes()
+
+    def get_previous_codes(self) -> str:
+        return self.codes._get_previous_codes()
+    
+    def get_diff(self) -> str:
+        return self.codes._get_diff()
 
     def _load_from_hardware(self, directory) -> None:
         self.codes._load_from_hardware(directory)
@@ -308,3 +358,16 @@ class ChatEnv:
                 download(image_url, filename)
 
         return images
+
+    def get_reviews(self) -> str:
+        content = ""
+        for filename in self.env_dict["review_comments_dict"]:
+            result = self.env_dict["review_comments_dict"][filename].get("Code Review Result", "")
+            conclusion = self.env_dict["review_comments_dict"][filename].get("Overall Conclusion", "")
+            actions = self.env_dict["review_comments_dict"][filename].get("Actions", "")
+            if "PASS" in result:
+                review_comments = f"### Code Review Result\n{result}\n### Overall Conclusion\n{conclusion}"
+            else:
+                review_comments = f"### Code Review Result\n{result}\n### Overall Conclusion\n{conclusion}\n### Actions\n{actions}"
+            content += "## Filename: {}\n## Review Comments\n{}\n\n".format(filename, review_comments)
+        return content

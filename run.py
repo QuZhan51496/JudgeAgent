@@ -82,7 +82,23 @@ parser.add_argument('--model', type=str, default="GPT_3_5_TURBO",
                     help="GPT Model, choose from {'GPT_3_5_TURBO', 'GPT_4', 'GPT_4_TURBO', 'GPT_4O', 'GPT_4O_MINI'}")
 parser.add_argument('--path', type=str, default="",
                     help="Your file directory, ChatDev will build upon your software in the Incremental mode")
+parser.add_argument('--judge_model', type=str, default="GPT_4O_MINI",
+                    help="Model used for judgment of generated code")
+parser.add_argument('--api_source', type=str,
+                    help="API source, choose from {'hk', 'hub', 'dashscope'}")
 args = parser.parse_args()
+
+if args.api_source == "hk":
+    os.environ['BASE_URL'] = os.environ.get('OPENAI_HK_BASE_URL')
+    os.environ['OPENAI_API_KEY'] = os.environ.get('OPENAI_HK_API_KEY')
+elif args.api_source == "hub":
+    os.environ['BASE_URL'] = os.environ.get('OPENAI_HUB_BASE_URL')
+    os.environ['OPENAI_API_KEY'] = os.environ.get('OPENAI_HUB_API_KEY')
+elif args.api_source == "dashscope":
+    os.environ['BASE_URL'] = os.environ.get('DASHSCOPE_BASE_URL')
+    os.environ['OPENAI_API_KEY'] = os.environ.get('DASHSCOPE_API_KEY')
+else:
+    raise ValueError("Invalid api_source. Choose from {'hk', 'hub', 'dashscope'}")
 
 # Start ChatDev
 
@@ -100,6 +116,11 @@ args2type = {'GPT_3_5_TURBO': ModelType.GPT_3_5_TURBO,
             'GPT_4_1_NANO': ModelType.GPT_4_1_NANO,
             'GPT_4_1_MINI': ModelType.GPT_4_1_MINI,
             'GPT_4_1': ModelType.GPT_4_1,
+            'GROK_3': ModelType.GROK_3,
+            'QWEN_MAX': ModelType.QWEN_MAX,
+            'CLAUDE_SONNET_4': ModelType.CLAUDE_SONNET_4, # claude-sonnet-4-20250514
+            'DEEPSEEK_V3': ModelType.DEEPSEEK_V3, # deepseek-v3-0324
+            'GEMINI_2_5_PRO': ModelType.GEMINI_2_5_PRO,
              }
 if openai_new_api:
     args2type['GPT_3_5_TURBO'] = ModelType.GPT_3_5_TURBO_NEW
@@ -111,6 +132,7 @@ chat_chain = ChatChain(config_path=config_path,
                        project_name=args.name,
                        org_name=args.org,
                        model_type=args2type[args.model],
+                       judge_model_type=args2type[args.judge_model],
                        code_path=args.path)
 
 # ----------------------------------------

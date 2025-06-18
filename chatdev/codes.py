@@ -12,6 +12,7 @@ class Codes:
         self.version: float = 0.0
         self.generated_content: str = generated_content
         self.codebooks = {}
+        self.previous_codebooks = {}
 
         def extract_filename_from_line(lines):
             file_name = ""
@@ -38,8 +39,8 @@ class Codes:
                     continue
                 group1 = match.group(1)
                 filename = extract_filename_from_line(group1)
-                if "__main__" in code:
-                    filename = "main.py"
+                # if "__main__" in code:
+                #     filename = "main.py"
                 if filename == "":  # post-processing
                     filename = extract_filename_from_code(code)
                 assert filename != ""
@@ -51,6 +52,10 @@ class Codes:
         return code
 
     def _update_codes(self, generated_content):
+        if not hasattr(self, '_update_started') or not self._update_started:
+            self.previous_codebooks = self.codebooks.copy()
+            self._update_started = True
+
         new_codes = Codes(generated_content)
         differ = difflib.Differ()
         for key in new_codes.codebooks.keys():
@@ -88,6 +93,8 @@ class Codes:
                 writer.write(self.codebooks[filename])
                 rewrite_codes_content += os.path.join(directory, filename) + " Wrote\n"
 
+        self._update_started = False
+
         if git_management:
             if not phase_info:
                 phase_info = ""
@@ -119,12 +126,45 @@ class Codes:
                 log_visualize(rewrite_codes_content)
             log_visualize(log_git_info)
 
+    def _rewrite_codes_to_dir(self, directory) -> None:
+        if not os.path.exists(directory):
+            os.mkdir(directory)
+
+        for filename in self.codebooks.keys():
+            filepath = os.path.join(directory, filename)
+            with open(filepath, "w", encoding="utf-8") as writer:
+                writer.write(self.codebooks[filename])
+
     def _get_codes(self) -> str:
         content = ""
         for filename in self.codebooks.keys():
             content += "{}\n```{}\n{}\n```\n\n".format(filename,
                                                        "python" if filename.endswith(".py") else filename.split(".")[
                                                            -1], self.codebooks[filename])
+        return content
+
+    def _get_previous_codes(self) -> str:
+        content = ""
+        for filename in self.previous_codebooks.keys():
+            content += "{}\n```{}\n{}\n```\n\n".format(filename,
+                                                       "python" if filename.endswith(".py") else filename.split(".")[
+                                                           -1], self.previous_codebooks[filename])
+        return content
+    
+    def _get_diff(self) -> str:
+        # 目前只会追踪原先存在的文件，后续新增的文件不会被追踪
+        content = ""
+        for filename in self.codebooks.keys():
+            if filename in self.previous_codebooks:
+                old_code = self.previous_codebooks[filename]
+                new_code = self.codebooks[filename]
+                lines_old = old_code.splitlines()
+                lines_new = new_code.splitlines()
+
+                unified_diff = difflib.unified_diff(lines_old, lines_new, lineterm='', fromfile='Old', tofile='New')
+                unified_diff = '\n'.join(unified_diff)
+                if unified_diff.strip():
+                    content += "{}\n```diff\n{}\n```\n\n".format(filename, unified_diff)
         return content
 
     def _load_from_hardware(self, directory) -> None:

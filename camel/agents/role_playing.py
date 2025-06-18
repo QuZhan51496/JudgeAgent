@@ -190,6 +190,8 @@ class RolePlaying:
         content = phase_prompt.format(
             **({"assistant_role": self.assistant_agent.role_name} | placeholders)
         )
+        # if "• Otherwise, revise the codes as needed, and return all codes strictly following the required format." in content:
+        #     breakpoint()
         retrieval_memory = self.assistant_agent.use_memory(content)
         if retrieval_memory!= None:
             placeholders["examples"] = retrieval_memory

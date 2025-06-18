@@ -52,6 +52,7 @@ class ChatMessage(BaseMessage):
     refusal: str = None
     audio: object = None
     annotations: List = field(default_factory=list)
+    reasoning_content: str = ""
     if openai_new_api:
         function_call: Optional[FunctionCall] = None
         tool_calls: Optional[ChatCompletionMessageToolCall] = None
@@ -92,6 +93,7 @@ class AssistantChatMessage(ChatMessage):
     refusal: str = None
     audio: object = None
     annotations: List = field(default_factory=list)
+    reasoning_content: str = ""
 
 
 @dataclass
@@ -117,3 +119,4 @@ class UserChatMessage(ChatMessage):
     refusal: str = None
     audio: object = None
     annotations: List = field(default_factory=list)
+    reasoning_content: str = ""

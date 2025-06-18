@@ -20,6 +20,7 @@ class ComposedPhase(ABC):
                  config_phase: dict = None,
                  config_role: dict = None,
                  model_type: ModelType = ModelType.GPT_3_5_TURBO,
+                 judge_model_type: ModelType = ModelType.GPT_4O_MINI,
                  log_filepath: str = ""
                  ):
         """
@@ -36,6 +37,7 @@ class ComposedPhase(ABC):
         self.cycle_num = cycle_num
         self.composition = composition
         self.model_type = model_type
+        self.judge_model_type = judge_model_type
         self.log_filepath = log_filepath
 
         self.config_phase = config_phase
@@ -66,6 +68,7 @@ class ComposedPhase(ABC):
                                          role_prompts=self.role_prompts,
                                          phase_name=phase,
                                          model_type=self.model_type,
+                                         judge_model_type=self.judge_model_type,
                                          log_filepath=self.log_filepath)
             self.phases[phase] = phase_instance
 
@@ -161,6 +164,24 @@ class ComposedPhase(ABC):
         chat_env = self.update_chat_env(chat_env)
         return chat_env
 
+    @staticmethod
+    def _is_phase_finished(phase_env: dict, field_name: str) -> bool:
+        """
+        检查指定字段是否包含完成标记
+        Args:
+            phase_env: 阶段环境字典
+            field_name: 要检查的字段名
+
+        Returns:
+            bool: 如果字段包含<INFO> Finished且前面内容为空则返回True
+        """
+        field_value = phase_env.get(field_name, "")
+        if isinstance(field_value, str):
+            if "<INFO> Finished".lower() in field_value.lower():
+                if field_value.split("<INFO> Finished")[0].strip() == "":
+                    return True
+        return False
+
 
 class Art(ComposedPhase):
     def __init__(self, **kwargs):
@@ -185,7 +206,8 @@ class CodeCompleteAll(ComposedPhase):
         num_tried = defaultdict(int)
         num_tried.update({filename: 0 for filename in pyfiles})
         self.phase_env.update({
-            "max_num_implement": 5,
+            # 最好设置为偶数，奇数会出现补充空文件的错误（因为phase的update_phase_env会被调用2次）
+            "max_num_implement": 6,
             "pyfiles": pyfiles,
             "num_tried": num_tried
         })
@@ -211,10 +233,84 @@ class CodeReview(ComposedPhase):
         return chat_env
 
     def break_cycle(self, phase_env) -> bool:
-        if "<INFO> Finished".lower() in phase_env['modification_conclusion'].lower():
+        if self._is_phase_finished(phase_env, 'review_comments'):
             return True
-        else:
-            return False
+        # 这一信号是由CodeReviewSummary发出的
+        if self._is_phase_finished(phase_env, 'review_comments_summary'):
+            return True
+        if phase_env.get("diff") is not None and phase_env["diff"] == "":
+            return True
+        return False
+
+
+class FileLevelCodeReview(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        self.phase_env.update({"modification_conclusion": ""})
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if self._is_phase_finished(phase_env, 'review_comments'):
+            return True
+        # 这一信号是由CodeReviewSummary发出的
+        if self._is_phase_finished(phase_env, 'review_comments_summary'):
+            return True
+        return False
+
+
+class DualCodeReview(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        # self.phase_env.update({"review_comments_conclusion": ""})
+        pass
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if self._is_phase_finished(phase_env, 'review_comments_conclusion'):
+            return True
+        return False
+
+
+class RepoReviewConsensus(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        pass
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if self._is_phase_finished(phase_env, 'review_comments_consensus'):
+            return True
+        return False
+
+
+class SimpleTaskReview(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        self.phase_env.update({"modification_conclusion": ""})
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if self._is_phase_finished(phase_env, 'simple_task_review_comments'):
+            return True
+        if phase_env.get("diff") is not None and phase_env["diff"] == "":
+            return True
+        return False
 
 
 class HumanAgentInteraction(ComposedPhase):
@@ -250,3 +346,62 @@ class Test(ComposedPhase):
             return True
         else:
             return False
+
+
+class UnitTest(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        pass
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if phase_env['unit_test_flag']:
+            log_visualize(f"**[Test Info]**\n\nAI User (Software Test Engineer):\nUnit Test Pass!\n")
+            return True
+        else:
+            return False
+
+
+class UnitTestCodeReview(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        pass
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if isinstance(phase_env.get("unit_test_review_comments"), dict):
+            for filename, comment in phase_env['unit_test_review_comments'].items():
+                if "<INFO> Finished".lower() not in comment.lower():
+                    return False
+                if comment.split("<INFO>")[0].strip() != "":
+                    return False
+            return True
+        return False
+
+class DetailedTaskReview(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        pass
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if isinstance(phase_env.get("detailed_task_review_comments"), dict):
+            if phase_env['detailed_task_review_comments'] == {}:
+                return False
+            for task_item, comment in phase_env['detailed_task_review_comments'].items():
+                if "<INFO> PASS".lower() not in comment.lower():
+                    return False
+            return True
+        return False

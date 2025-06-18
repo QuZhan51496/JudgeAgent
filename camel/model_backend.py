@@ -30,11 +30,11 @@ except ImportError:
 
 import os
 
-OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
-if 'BASE_URL' in os.environ:
-    BASE_URL = os.environ['BASE_URL']
-else:
-    BASE_URL = None
+# OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
+# if 'BASE_URL' in os.environ:
+#     BASE_URL = os.environ['BASE_URL']
+# else:
+#     BASE_URL = None
 
 
 class ModelBackend(ABC):
@@ -65,27 +65,24 @@ class OpenAIModel(ModelBackend):
 
     def run(self, *args, **kwargs):
         string = "\n".join([message["content"] for message in kwargs["messages"]])
-        model_encoding_map = {
-            "gpt-4.1-nano": "gpt-4o-mini",
-            "gpt-4.1-mini": "gpt-4o-mini",
-            "gpt-4.1": "gpt-4o-mini",
-        }
-        tiktoken_model_name = model_encoding_map.get(self.model_type.value, self.model_type.value)
-        encoding = tiktoken.encoding_for_model(tiktoken_model_name)
+        try:
+            encoding = tiktoken.encoding_for_model(self.model_type.value)
+        except KeyError:
+            encoding = tiktoken.encoding_for_model("gpt-4o-mini")
         num_prompt_tokens = len(encoding.encode(string))
         gap_between_send_receive = 15 * len(kwargs["messages"])
         num_prompt_tokens += gap_between_send_receive
 
         if openai_new_api:
             # Experimental, add base_url
-            if BASE_URL:
+            if os.environ['BASE_URL']:
                 client = openai.OpenAI(
-                    api_key=OPENAI_API_KEY,
-                    base_url=BASE_URL,
+                    api_key=os.environ['OPENAI_API_KEY'],
+                    base_url=os.environ['BASE_URL'],
                 )
             else:
                 client = openai.OpenAI(
-                    api_key=OPENAI_API_KEY
+                    api_key=os.environ['OPENAI_API_KEY']
                 )
 
             num_max_token_map = {
@@ -102,10 +99,14 @@ class OpenAIModel(ModelBackend):
                 "gpt-4.1-nano": 32768, #100000
                 "gpt-4.1-mini": 32768, #100000
                 "gpt-4.1": 32768, #100000
+                "grok-3": 32768,
+                "qwen-max-latest": 8192,
+                "claude-sonnet-4-20250514": 32768,
+                "deepseek-v3-0324": 16384,
             }
-            num_max_token = num_max_token_map[self.model_type.value]
-            num_max_completion_tokens = num_max_token - num_prompt_tokens
-            self.model_config_dict['max_tokens'] = num_max_completion_tokens
+            # num_max_token = num_max_token_map[self.model_type.value]
+            # num_max_completion_tokens = num_max_token - num_prompt_tokens
+            # self.model_config_dict['max_tokens'] = num_max_completion_tokens
 
             response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
                                                       **self.model_config_dict)
@@ -200,13 +201,18 @@ class ModelFactory:
             ModelType.GPT_4_1_NANO,
             ModelType.GPT_4_1_MINI,
             ModelType.GPT_4_1,
+            ModelType.GROK_3,
+            ModelType.QWEN_MAX,
+            ModelType.CLAUDE_SONNET_4,
+            ModelType.DEEPSEEK_V3,
             None
         }:
             model_class = OpenAIModel
         elif model_type == ModelType.STUB:
             model_class = StubModel
         else:
-            raise ValueError("Unknown model")
+            model_class = OpenAIModel
+            # raise ValueError("Unknown model")
 
         if model_type is None:
             model_type = default_model_type

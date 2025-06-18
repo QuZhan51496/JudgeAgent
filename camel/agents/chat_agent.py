@@ -267,8 +267,8 @@ class ChatAgent(BaseAgent):
                 )
 
             # TODO strict <INFO> check, only in the beginning of the line
-            # if "<INFO>" in output_messages[0].content:
-            if output_messages[0].content.split("\n")[-1].startswith("<INFO>"):
+            if "<INFO>" in output_messages[0].content:
+            # if output_messages[0].content.split("\n")[-1].startswith("<INFO>"):
                 self.info = True
         else:
             self.terminated = True

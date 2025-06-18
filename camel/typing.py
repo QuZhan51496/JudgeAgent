@@ -55,6 +55,11 @@ class ModelType(Enum):
     GPT_4_1_NANO = "gpt-4.1-nano"
     GPT_4_1_MINI = "gpt-4.1-mini"
     GPT_4_1 = "gpt-4.1"
+    GROK_3 = "grok-3"
+    QWEN_MAX = "qwen-max-latest"
+    CLAUDE_SONNET_4 = "claude-sonnet-4-20250514"
+    DEEPSEEK_V3 = "deepseek-v3-0324"
+    GEMINI_2_5_PRO = "gemini-2.5-pro-preview-05-06"
 
     STUB = "stub"
 

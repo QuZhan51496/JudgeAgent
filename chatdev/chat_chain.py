@@ -29,6 +29,7 @@ class ChatChain:
                  project_name: str = None,
                  org_name: str = None,
                  model_type: ModelType = ModelType.GPT_3_5_TURBO,
+                 judge_model_type: ModelType = ModelType.GPT_4O_MINI,
                  code_path: str = None) -> None:
         """
 
@@ -48,6 +49,7 @@ class ChatChain:
         self.project_name = project_name
         self.org_name = org_name
         self.model_type = model_type
+        self.judge_model_type = judge_model_type
         self.code_path = code_path
 
         with open(self.config_path, 'r', encoding="utf8") as file:
@@ -98,7 +100,8 @@ class ChatChain:
         for phase in self.config_phase:
             assistant_role_name = self.config_phase[phase]['assistant_role_name']
             user_role_name = self.config_phase[phase]['user_role_name']
-            phase_prompt = "\n\n".join(self.config_phase[phase]['phase_prompt'])
+            # phase_prompt = "\n\n".join(self.config_phase[phase]['phase_prompt'])
+            phase_prompt = "\n".join(self.config_phase[phase]['phase_prompt'])
             phase_class = getattr(self.phase_module, phase)
             phase_instance = phase_class(assistant_role_name=assistant_role_name,
                                          user_role_name=user_role_name,
@@ -106,6 +109,7 @@ class ChatChain:
                                          role_prompts=self.role_prompts,
                                          phase_name=phase,
                                          model_type=self.model_type,
+                                         judge_model_type=self.judge_model_type,
                                          log_filepath=self.log_filepath)
             self.phases[phase] = phase_instance
 
@@ -153,6 +157,7 @@ class ChatChain:
                                                          config_phase=self.config_phase,
                                                          config_role=self.config_role,
                                                          model_type=self.model_type,
+                                                         judge_model_type=self.judge_model_type,
                                                          log_filepath=self.log_filepath)
             self.chat_env = compose_phase_instance.execute(self.chat_env)
         else:
@@ -166,6 +171,14 @@ class ChatChain:
         """
         for phase_item in self.chain:
             self.execute_step(phase_item)
+            # 保存中间代码
+            save_phase_filter = ["CodeCompleteAll", "CodeReview", "SimpleTaskReview", "DetailedTaskReview", "UnitTestCoding", "UnitTest"]
+            if phase_item['phase'] in save_phase_filter:
+                parent_directory = f"{os.path.dirname(self.chat_env.env_dict['directory'])}_staged"
+                directory = os.path.join(parent_directory, phase_item['phase'], os.path.basename(self.chat_env.env_dict['directory']))
+                os.makedirs(directory, exist_ok=True)
+                self.chat_env.codes._rewrite_codes_to_dir(directory)
+                self.chat_env.unit_test_codes._rewrite_codes_to_dir(directory)
 
     def get_logfilepath(self):
         """
@@ -181,8 +194,10 @@ class ChatChain:
         root = os.path.dirname(filepath)
         # directory = root + "/WareHouse/"
         directory = os.path.join(root, "WareHouse")
+        # log_filepath = os.path.join(directory,
+        #                             "{}.log".format("_".join([self.project_name, self.org_name, start_time])))
         log_filepath = os.path.join(directory,
-                                    "{}.log".format("_".join([self.project_name, self.org_name, start_time])))
+                                    "{}.log".format("_".join([self.project_name, start_time])))
         return start_time, log_filepath
 
     def pre_processing(self):
@@ -203,7 +218,8 @@ class ChatChain:
                     os.remove(file_path)
                     print("{} Removed.".format(file_path))
 
-        software_path = os.path.join(directory, "_".join([self.project_name, self.org_name, self.start_time]))
+        # software_path = os.path.join(directory, "_".join([self.project_name, self.org_name, self.start_time]))
+        software_path = os.path.join(directory, self.org_name, self.project_name)
         self.chat_env.set_directory(software_path)
 
         if self.chat_env.config.with_memory is True:
@@ -318,9 +334,12 @@ class ChatChain:
         logging.shutdown()
         time.sleep(1)
 
-        shutil.move(self.log_filepath,
-                    os.path.join(root + "/WareHouse", "_".join([self.project_name, self.org_name, self.start_time]),
-                                 os.path.basename(self.log_filepath)))
+        # shutil.move(self.log_filepath,
+        #             os.path.join(root + "/WareHouse", "_".join([self.project_name, self.org_name, self.start_time]),
+        #                          os.path.basename(self.log_filepath)))
+
+        target_log_path = os.path.join(self.chat_env.env_dict['directory'], os.path.basename(self.log_filepath))
+        shutil.move(self.log_filepath, target_log_path)
 
     # @staticmethod
     def self_task_improve(self, task_prompt):

@@ -81,6 +81,7 @@ def num_tokens_from_messages(
         encoding = tiktoken.encoding_for_model(value_for_tiktoken)
     except KeyError:
         encoding = tiktoken.get_encoding("cl100k_base")
+    return count_tokens_openai_chat_models(messages, encoding)
 
     if model in {
         ModelType.GPT_3_5_TURBO,
@@ -94,6 +95,10 @@ def num_tokens_from_messages(
         ModelType.GPT_4_1_NANO,
         ModelType.GPT_4_1_MINI,
         ModelType.GPT_4_1,
+        ModelType.GROK_3,
+        ModelType.QWEN_MAX,
+        ModelType.CLAUDE_SONNET_4,
+        ModelType.DEEPSEEK_V3,
         ModelType.STUB
     }:
         return count_tokens_openai_chat_models(messages, encoding)
@@ -139,7 +144,16 @@ def get_model_token_limit(model: ModelType) -> int:
         return 128000
     elif model == ModelType.GPT_4_1:
         return 128000
+    elif model == ModelType.GROK_3:
+        return 128000
+    elif model == ModelType.QWEN_MAX:
+        return 128000
+    elif model == ModelType.CLAUDE_SONNET_4:
+        return 128000
+    elif model == ModelType.DEEPSEEK_V3:
+        return 128000
     else:
+        return 128000
         raise ValueError("Unknown model type")
 
 
