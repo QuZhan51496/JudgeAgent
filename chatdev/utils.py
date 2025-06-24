@@ -100,7 +100,8 @@ class CodeParser:
     @classmethod
     def parse_blocks(cls, text: str):
         # 首先根据"##"将文本分割成不同的block
-        blocks = text.split("##")
+        # blocks = text.split("##")
+        blocks = re.split(r'(?:^|\n)(?=##\s)', text)
 
         # 创建一个字典，用于存储每个block的标题和内容
         block_dict = {}
@@ -115,8 +116,11 @@ class CodeParser:
                 block_content = ""
             else:
                 # 将block的标题和内容分开，并分别去掉前后的空白字符
-                block_title, block_content = block.split("\n", 1)
-            block_dict[block_title.strip()] = block_content.strip()
+            #     block_title, block_content = block.split("\n", 1)
+            # block_dict[block_title.strip()] = block_content.strip()
+                first_line, block_content = block.split("\n", 1)
+                block_title = first_line.replace("##", "").strip()
+            block_dict[block_title] = block_content.strip()
 
         return block_dict
 
@@ -129,10 +133,7 @@ class CodeParser:
         if match:
             code = match.group(1)
         else:
-            logger.error(f"{pattern} not match following text:")
-            logger.error(text)
-            # raise Exception
-            return text  # just assume original text is code
+            raise ValueError(f"{pattern} not match!")
         return code
 
     @classmethod
@@ -159,3 +160,20 @@ class CodeParser:
         else:
             raise Exception
         return tasks
+
+if __name__ == "__main__":
+    text = """
+## Task
+This is a task description.
+### Subtask 1
+This is a subtask description.
+
+#### This is a subtask description.
+## Code Example
+This is a code example.
+#### Another Block
+# This is another block.
+"""
+    blocks = CodeParser.parse_blocks(text)
+    print(blocks.keys())
+    print(blocks)

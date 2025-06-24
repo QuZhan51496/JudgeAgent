@@ -405,3 +405,21 @@ class DetailedTaskReview(ComposedPhase):
                     return False
             return True
         return False
+
+class JudgeofChain(ComposedPhase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        pass
+
+    def update_chat_env(self, chat_env):
+        return chat_env
+
+    def break_cycle(self, phase_env) -> bool:
+        if len(phase_env["judge_triplet"].triplets) == 0:
+            return True
+        for judge_triplet in phase_env["judge_triplet"].triplets:
+            if not judge_triplet.is_complete:
+                return False
+        return True

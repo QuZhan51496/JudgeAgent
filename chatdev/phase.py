@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 import json
 import pickle
 import ast
+import concurrent.futures
 from pydantic import BaseModel
 from typing import List, Optional
 from pathlib import Path
@@ -18,7 +19,7 @@ from chatdev.statistics import get_info
 from chatdev.utils import log_visualize, log_arguments
 
 from camel.dev_graph import DevGraph
-from camel.schema import Dependency, DependencyContract, DependencyNetwork
+from camel.schema import Dependency, DependencyContract, DependencyNetwork, JudgeTriplet, JudgeTripletList
 from chatdev.utils import CodeParser
 
 
@@ -417,6 +418,7 @@ class Phase(ABC):
             pass    
         return []
 
+
 class DemandAnalysis(Phase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -474,44 +476,6 @@ class Coding(Phase):
         return chat_env
 
 
-class ArtDesign(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env = {"task": chat_env.env_dict['task_prompt'],
-                          "description": chat_env.env_dict['task_description'],
-                          "language": chat_env.env_dict['language'],
-                          "codes": chat_env.get_codes()}
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.proposed_images = chat_env.get_proposed_images_from_message(self.seminar_conclusion)
-        log_visualize(
-            "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        return chat_env
-
-
-class ArtIntegration(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env = {"task": chat_env.env_dict['task_prompt'],
-                          "language": chat_env.env_dict['language'],
-                          "codes": chat_env.get_codes(),
-                          "images": "\n".join(
-                              ["{}: {}".format(filename, chat_env.proposed_images[filename]) for
-                               filename in sorted(list(chat_env.proposed_images.keys()))])}
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.update_codes(self.seminar_conclusion)
-        chat_env.rewrite_codes("Finish Art Integration")
-        # chat_env.generate_images_from_codes()
-        log_visualize(
-            "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        return chat_env
-
-
 class CodeComplete(Phase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -540,561 +504,6 @@ class CodeComplete(Phase):
         chat_env.rewrite_codes("Code Complete #" + str(self.phase_env["cycle_index"]) + " Finished")
         log_visualize(
             "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        return chat_env
-
-
-class SimpleTaskReviewComment(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update(
-            {"task": chat_env.env_dict['task_prompt'],
-             "modality": chat_env.env_dict['modality'],
-             "language": chat_env.env_dict['language'],
-             "codes": chat_env.get_codes()})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict['simple_task_review_comments'] = self.seminar_conclusion
-        self.phase_env['simple_task_review_comments'] = self.seminar_conclusion
-        return chat_env
-
-
-class SimpleTaskReviewModification(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "modality": chat_env.env_dict['modality'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.get_codes(),
-                               "comments": chat_env.env_dict['simple_task_review_comments']})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        if "```".lower() in self.seminar_conclusion.lower():
-            chat_env.update_codes(self.seminar_conclusion)
-            chat_env.rewrite_codes("Review #" + str(self.phase_env["cycle_index"]) + " Finished")
-            log_visualize(
-                "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        self.phase_env['modification_conclusion'] = self.seminar_conclusion
-        chat_env.env_dict['last_phase_name'] = self.phase_name
-        return chat_env
-
-
-class GraphConfig(BaseModel):
-    include_dirs: Optional[List[str]] = None
-    exclude_dirs: Optional[List[str]] = ["__pycache__", "env", ".git", "venv", "logs", "output", "tmp", "temp", "cache", "data",]
-    exclude_files: Optional[List[str]] = [".DS_Store"]
-
-
-class AnalyzeDependencies(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.graph_config = GraphConfig()
-
-    @property
-    def workspace(self):
-        if "directory" in self.phase_env:
-            return Path(self.phase_env["directory"])
-        else:
-            raise ValueError("No directory in phase_env.")
-
-    @property
-    def dependency_dir(self):
-        dependency_path = self.workspace / "dependency"
-        dependency_path.mkdir(exist_ok=True)
-        return dependency_path
-
-    @property
-    def graph_file(self):
-        return self.dependency_dir / "graph.pkl"
-
-    @property
-    def tags_file(self):
-        return self.dependency_dir / "tags.json"
-
-    @property
-    def structure_file(self):
-        return self.dependency_dir / "tree_structure.json"
-
-    @property
-    def aaaj_graph(self):
-        if not hasattr(self, "_aaaj_graph"):
-            self._aaaj_graph = DevGraph(
-                root=str(self.workspace),
-                include_dirs=self.graph_config.include_dirs,
-                exclude_dirs=self.graph_config.exclude_dirs,
-                exclude_files=self.graph_config.exclude_files,
-            )
-        return self._aaaj_graph
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"directory": chat_env.env_dict['directory'],
-                               "codebooks": chat_env.codes.codebooks})
-
-    def update_chat_env(self, chat_env, dependency_network) -> ChatEnv:
-        chat_env.env_dict.update({
-            'dependency_dir': self.dependency_dir,
-            'dependency_network': dependency_network
-        })
-        return chat_env
-
-    def _save_graph_and_tags(self, graph, tags):
-        log_visualize("Saving the graph and tags...")
-        with open(self.graph_file, "wb") as f:
-            pickle.dump(graph, f)
-        with open(self.tags_file, "w") as f:
-            json.dump(
-                (
-                    [
-                        {
-                            "fname": tag.fname,
-                            "rel_fname": tag.rel_fname,
-                            "line_number": tag.line,
-                            "name": tag.name,
-                            "identifier": tag.identifier,
-                            "category": tag.category,
-                            "details": tag.details,
-                        }
-                        for tag in tags
-                    ]
-                    if tags
-                    else {}
-                ),
-                f,
-                indent=4,
-            )
-
-    def _save_file_structure(self):
-
-        def build_tree_structure(current_path):
-            tree = {}
-            for root, dirs, files in os.walk(current_path):
-                dirs[:] = [
-                    d
-                    for d in dirs
-                    if not any(excluded in d for excluded in self.graph_config.exclude_dirs)
-                ]
-                relative_root = os.path.relpath(root, self.workspace)
-                tree[relative_root] = {
-                    file: None
-                    for file in files
-                    if not file.startswith(".")
-                    and file not in self.graph_config.exclude_files
-                }
-            return tree
-
-        tree_structure = build_tree_structure(self.workspace)
-        self.workspace_info = {
-            "workspace": str(self.workspace),
-            "tree_structure": tree_structure,
-        }
-        with open(self.structure_file, "w", encoding="utf-8") as f:
-            json.dump(self.workspace_info, f, indent=4)
-
-    def _analyze_static_dependencies(self):
-        filepaths = self.aaaj_graph.list_py_files([str(self.workspace)])
-        tags, graph = self.aaaj_graph.build(filepaths) if filepaths else (None, None)
-        self._save_graph_and_tags(graph, tags)
-        self._save_file_structure()
-        return tags, graph
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=20),
-        stop=stop_after_attempt(6)
-    )
-    def _analyze_dependency(self,
-                            chat_env,
-                            need_reflect=False,
-                            placeholders=None,
-                            chat_turn_limit=10):
-        content = self.chatting(
-            chat_env=chat_env,
-            task_prompt=chat_env.env_dict['task_prompt'],
-            need_reflect=need_reflect,
-            assistant_role_name=self.assistant_role_name,
-            user_role_name=self.user_role_name,
-            phase_prompt=self.phase_prompt,
-            phase_name=self.phase_name,
-            assistant_role_prompt=self.assistant_role_prompt,
-            user_role_prompt=self.user_role_prompt,
-            chat_turn_limit=chat_turn_limit,
-            placeholders=placeholders,
-            memory=chat_env.memory,
-            model_type=self.model_type
-        )
-
-        import re
-        pattern = rf'\[CONTENT\](.*?)\[/CONTENT\]'
-        match = re.search(pattern, content, re.DOTALL)
-
-        if not match:
-            raise ValueError(f"The [CONTENT] tag was not found")
-
-        json_str = match.group(1).strip()
-        instruct_content = json.loads(json_str)
-
-        dependencies = []
-        for item in instruct_content:
-            dependency = Dependency(**item)
-            dependencies.append(dependency)
-        return dependencies
-
-    @staticmethod
-    def extract_lines(s, a, b):
-        lines = s.splitlines()
-        a = max(1, a)
-        b = min(len(lines), b)
-        selected_lines = lines[a-1:b]
-        return '\n'.join(selected_lines)
-
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        tags, graph = self._analyze_static_dependencies()
-
-        if graph is None:
-            log_visualize("No graph found.")
-            chat_env = self.update_chat_env(chat_env, DependencyNetwork())
-            return chat_env
-
-        file_pairs = {}
-        for edge in graph.edges(data=True):
-            if not edge[2].get("references"):
-                continue
-
-            caller_rel_fname = graph.nodes[edge[0]]["rel_fname"]
-            callee_rel_fname = graph.nodes[edge[1]]["rel_fname"]
-            file_pair = (caller_rel_fname, callee_rel_fname)
-
-            if file_pair not in file_pairs:
-                file_pairs[file_pair] = {
-                    "edges": [],
-                    "references": []
-                }
-
-            file_pairs[file_pair]["edges"].append((edge[0], edge[1]))
-            file_pairs[file_pair]["references"].extend(edge[2]["references"])
-
-        dependency_network = DependencyNetwork()
-        for (caller_rel_fname, callee_rel_fname), data in file_pairs.items():
-            caller_code = chat_env.codes.codebooks[caller_rel_fname]
-            callee_code = chat_env.codes.codebooks[callee_rel_fname]
-
-            snippets = []
-            for ref in data["references"]:
-                start_line = ref["ref_line"][0]
-                end_line = ref["ref_line"][1]
-                snippet = self.extract_lines(caller_code, start_line, end_line)
-                snippets.append({
-                    "snippet": snippet,
-                    "line_range": f"{start_line}-{end_line}",
-                    "ref": ref
-                })
-
-            combined_snippets = "\n\n".join([
-                f"Snippet {i+1} (lines {s['line_range']}):\n```Code\n{s['snippet']}\n```"
-                for i, s in enumerate(snippets)
-            ])
-
-            placeholders = {
-                "caller_rel_fname": caller_rel_fname,
-                "callee_rel_fname": callee_rel_fname,
-                "caller_code": caller_code,
-                "callee_code": callee_code,
-                "combined_snippets": combined_snippets
-            }
-
-            dependencies = self._analyze_dependency(chat_env=chat_env,
-                                                    need_reflect=need_reflect,
-                                                    chat_turn_limit=chat_turn_limit,
-                                                    placeholders=placeholders)
-
-            dependency_network.graph.append(
-                DependencyContract(
-                    caller=caller_rel_fname,
-                    callee=callee_rel_fname,
-                    dependencies=dependencies,
-                )
-            )
-
-        chat_env = self.update_chat_env(chat_env, dependency_network)
-        return chat_env
-
-
-class EnhancedCodeReview(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update(
-            {"task": chat_env.env_dict['task_prompt'],
-             "modality": chat_env.env_dict['modality'],
-             "ideas": chat_env.env_dict['ideas'],
-             "language": chat_env.env_dict['language'],
-             "codes": chat_env.codes.codebooks,
-             "images": ", ".join(chat_env.incorporated_images),
-             "dependency_network": chat_env.env_dict.get('dependency_network')})
-
-    def update_chat_env(self, chat_env, filename, review_comment) -> ChatEnv:
-        if not isinstance(chat_env.env_dict.get('review_comments_dict'), dict):
-            chat_env.env_dict['review_comments_dict'] = {}
-        chat_env.env_dict['review_comments_dict'][filename] = review_comment
-        return chat_env
-
-    def _get_dependency_context(self, target_filename):
-        dependency_context = ""
-        if self.phase_env["dependency_network"] is not None:
-            for i, dependency in enumerate(self.phase_env["dependency_network"].graph):
-                if dependency.caller != target_filename:
-                    continue
-                dependency_context += f"Callee: {dependency.callee}\n"
-                for contract in dependency.dependencies:
-                    dependency_context += f"  - Function: {contract.function}\n"
-                    dependency_context += f"  - Dependency Type: {contract.dependency_type}\n"
-                    dependency_context += f"  - Analysis Result: {contract.contract}\n\n"
-        return dependency_context
-
-    def _get_relative_code(self, target_filename):
-        codes = []
-        for filename in self.phase_env["codes"].keys():
-            if target_filename in filename:
-                continue
-            codes.append(f"----- {filename}\n```{self.phase_env['codes'][filename]}```")
-        return "\n".join(codes)
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=20),
-        stop=stop_after_attempt(6)
-    )
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        for filename in chat_env.codes.codebooks.keys():
-            placeholders = {
-                "user_requirement": self.phase_env['task'],
-                "dependency_context": self._get_dependency_context(filename),
-                "relative_code": self._get_relative_code(filename),
-                "code": chat_env.codes.codebooks[filename],
-            }
-            review_comment = self.chatting(
-                chat_env=chat_env,
-                task_prompt=chat_env.env_dict['task_prompt'],
-                need_reflect=need_reflect,
-                assistant_role_name=self.assistant_role_name,
-                user_role_name=self.user_role_name,
-                phase_prompt=self.phase_prompt,
-                phase_name=self.phase_name,
-                assistant_role_prompt=self.assistant_role_prompt,
-                user_role_prompt=self.user_role_prompt,
-                chat_turn_limit=chat_turn_limit,
-                placeholders=placeholders,
-                memory=chat_env.memory,
-                model_type=self.model_type
-            )
-            review_comment = CodeParser.parse_blocks(review_comment)
-            chat_env = self.update_chat_env(chat_env, filename, review_comment)
-        return chat_env
-
-
-class CodeReviewSummary(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update(
-            {"task": chat_env.env_dict['task_prompt'],
-             "modality": chat_env.env_dict['modality'],
-             "ideas": chat_env.env_dict['ideas'],
-             "language": chat_env.env_dict['language'],
-             "codes": chat_env.get_codes(),
-             "images": ", ".join(chat_env.incorporated_images),
-             "previous_reviews": chat_env.get_reviews()})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict['review_comments_summary'] = self.seminar_conclusion
-        self.phase_env["review_comments_summary"] = self.seminar_conclusion
-        return chat_env
-
-
-class ReviewOnReview(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update(
-            {
-                "task": chat_env.env_dict['task_prompt'],
-                "codes": chat_env.get_codes(),
-                "review_comments": chat_env.env_dict['review_comments'],
-                "review_comments_summary": chat_env.env_dict['review_comments_summary'],
-            }
-        )
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict["review_comments_conclusion"] = self.seminar_conclusion
-        self.phase_env["review_comments_conclusion"] = self.seminar_conclusion
-        return chat_env
-
-
-class ReviewConsensus(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        comments = ""
-        if "<INFO> Finished".lower() in chat_env.env_dict.get('review_comments', "").lower():
-            if chat_env.env_dict['review_comments'].split("<INFO>")[0].strip() == "":
-                comments = "I think this code has no problems and can be run directly."
-        if comments == "":
-            comments = chat_env.env_dict['review_comments']
-        self.phase_env.update(
-            {"task": chat_env.env_dict['task_prompt'],
-             #  "modality": chat_env.env_dict['modality'],
-             #  "ideas": chat_env.env_dict['ideas'],
-             #  "language": chat_env.env_dict['language'],
-             "codes": chat_env.get_codes(),
-             "review_comments": comments})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict['review_comments_consensus'] = self.seminar_conclusion
-        self.phase_env['review_comments_consensus'] = self.seminar_conclusion
-        return chat_env
-
-
-class EnhancedCodeReviewModification(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        if chat_env.env_dict.get("review_comments_conclusion") is not None:
-            comments = chat_env.env_dict["review_comments_conclusion"]  # from ReviewOnReview in DualCodeReview
-        elif chat_env.env_dict.get("review_comments_summary") is not None:
-            comments = chat_env.env_dict["review_comments_summary"]  # from CodeReviewSummary in FileLevelCodeReview
-        elif chat_env.env_dict.get("review_comments_consensus") is not None:
-            comments = chat_env.env_dict["review_comments_consensus"]  # from ReviewConsensus in RepoReviewConsensus
-        else:
-            comments = chat_env.env_dict['review_comments']  # from CodeReviewComment in CodeReview
-
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "modality": chat_env.env_dict['modality'],
-                               "ideas": chat_env.env_dict['ideas'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.get_codes(),
-                               "comments": comments})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        if "```".lower() in self.seminar_conclusion.lower():
-            chat_env.update_codes(self.seminar_conclusion)
-            chat_env.rewrite_codes("Review #" + str(self.phase_env["cycle_index"]) + " Finished")
-            log_visualize(
-                "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        self.phase_env['modification_conclusion'] = self.seminar_conclusion
-        return chat_env
-
-
-class CodeReviewComment(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update(
-            {"task": chat_env.env_dict['task_prompt'],
-             "modality": chat_env.env_dict['modality'],
-             "ideas": chat_env.env_dict['ideas'],
-             "language": chat_env.env_dict['language'],
-             "codes": chat_env.get_codes(),
-             "images": ", ".join(chat_env.incorporated_images)})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict['review_comments'] = self.seminar_conclusion
-        self.phase_env['review_comments'] = self.seminar_conclusion
-        return chat_env
-
-
-class CodeReviewModification(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "modality": chat_env.env_dict['modality'],
-                               "ideas": chat_env.env_dict['ideas'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.get_codes(),
-                               "comments": chat_env.env_dict['review_comments']})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        if "```".lower() in self.seminar_conclusion.lower():
-            chat_env.update_codes(self.seminar_conclusion)
-            chat_env.rewrite_codes("Review #" + str(self.phase_env["cycle_index"]) + " Finished")
-            log_visualize(
-                "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        self.phase_env['modification_conclusion'] = self.seminar_conclusion
-        chat_env.env_dict['last_phase_name'] = self.phase_name
-        return chat_env
-
-
-class CodeReviewHuman(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "modality": chat_env.env_dict['modality'],
-                               "ideas": chat_env.env_dict['ideas'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.get_codes()})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        if "```".lower() in self.seminar_conclusion.lower():
-            chat_env.update_codes(self.seminar_conclusion)
-            chat_env.rewrite_codes("Human Review #" + str(self.phase_env["cycle_index"]) + " Finished")
-            log_visualize(
-                "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        return chat_env
-
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        log_visualize(
-            f"**[Human-Agent-Interaction]**\n\n"
-            f"Now you can participate in the development of the software!\n"
-            f"The task is:  {chat_env.env_dict['task_prompt']}\n"
-            f"Please input your feedback (in multiple lines). It can be bug report or new feature requirement.\n"
-            f"You are currently in the #{self.phase_env['cycle_index']} human feedback with a total of {self.phase_env['cycle_num']} feedbacks\n"
-            f"Type 'end' on a separate line to submit.\n"
-            f"You can type \"Exit\" to quit this mode at any time.\n"
-        )
-        provided_comments = []
-        while True:
-            user_input = input(">>>>>>")
-            if user_input.strip().lower() == "end":
-                break
-            if user_input.strip().lower() == "exit":
-                provided_comments = ["exit"]
-                break
-            provided_comments.append(user_input)
-        self.phase_env["comments"] = '\n'.join(provided_comments)
-        log_visualize(
-            f"**[User Provided Comments]**\n\n In the #{self.phase_env['cycle_index']} of total {self.phase_env['cycle_num']} comments: \n\n" +
-            self.phase_env["comments"])
-        if self.phase_env["comments"].strip().lower() == "exit":
-            return chat_env
-
-        self.seminar_conclusion = \
-            self.chatting(chat_env=chat_env,
-                          task_prompt=chat_env.env_dict['task_prompt'],
-                          need_reflect=need_reflect,
-                          assistant_role_name=self.assistant_role_name,
-                          user_role_name=self.user_role_name,
-                          phase_prompt=self.phase_prompt,
-                          phase_name=self.phase_name,
-                          assistant_role_prompt=self.assistant_role_prompt,
-                          user_role_prompt=self.user_role_prompt,
-                          chat_turn_limit=chat_turn_limit,
-                          placeholders=self.phase_env,
-                          memory=chat_env.memory,
-                          model_type=self.model_type)
-        chat_env = self.update_chat_env(chat_env)
         return chat_env
 
 
@@ -1174,192 +583,72 @@ class TestModification(Phase):
         return chat_env
 
 
-class UnitTestDetermination(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "modality": chat_env.env_dict['modality'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.get_codes()})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict['unit_test_files'] = self._parse_list(self.seminar_conclusion)
-        if not chat_env.env_dict['unit_test_files']:
-            raise ValueError("No Valid Unit Test Files.")
-        return chat_env
-
-
 class UnitTestCoding(Phase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     def update_phase_env(self, chat_env):
-        chat_env.unit_test_codes.codebooks = {}
         self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
-                               "code": chat_env.codes.codebooks,
-                               "unit_test_files": chat_env.env_dict['unit_test_files'],
-                               "unit_test_flag": False})
+                               "codes": chat_env.get_codes(),
+                               "judge_triplet": chat_env.env_dict['judge_triplet'],})
 
-    def update_chat_env(self, chat_env, unit_test_filename) -> ChatEnv:
-        # if "```".lower() in self.seminar_conclusion.lower():
-        #     test_code_blocks = []
-        #     regex = r"(.+?)\n```.*?\n(.*?)```"
-        #     matches = re.finditer(regex, self.seminar_conclusion, re.DOTALL)
-        #     for match in matches:
-        #         code = match.group(2)
-        #         formatted_block = f"{unit_test_filename}\n```\n{code}\n```"
-        #         test_code_blocks.append(formatted_block)
-        #         chat_env.update_unit_test_codes("\n\n".join(test_code_blocks))
-
-        # return chat_env
-        chat_env.update_unit_test_codes(self.seminar_conclusion)
-        if unit_test_filename not in chat_env.unit_test_codes.codebooks.keys():
-            raise ValueError("No Valid Codes.")
-        return chat_env
-
-    def update_chat_env_overall(self, chat_env) -> ChatEnv:
-        chat_env.rewrite_unit_test_codes("Finish Coding Unit Test.")
+    def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
+        try:
+            judge_triplet.unit_test_code = CodeParser.parse_code(block="", text=self.seminar_conclusion)
+        except ValueError as e:
+            log_visualize(f"Error parsing unit test code: {e}")
         return chat_env
 
     @retry(
         wait=wait_random_exponential(min=1, max=20),
         stop=stop_after_attempt(6)
     )
+    def _process_single_triplet(self, chat_env, judge_triplet, need_reflect, chat_turn_limit):
+        placeholders = {
+            "task": self.phase_env['task'],
+            "modality": self.phase_env['modality'],
+            "language": self.phase_env['language'],
+            "codes": self.phase_env['codes'],
+            "task_item": judge_triplet.subtask,
+            "code_snippets": judge_triplet.code_snippets
+        }
+        seminar_conclusion = self.chatting(
+            chat_env=chat_env,
+            task_prompt=chat_env.env_dict['task_prompt'],
+            need_reflect=need_reflect,
+            assistant_role_name=self.assistant_role_name,
+            user_role_name=self.user_role_name,
+            phase_prompt=self.phase_prompt,
+            phase_name=self.phase_name,
+            assistant_role_prompt=self.assistant_role_prompt,
+            user_role_prompt=self.user_role_prompt,
+            chat_turn_limit=chat_turn_limit,
+            placeholders=placeholders,
+            memory=chat_env.memory,
+            model_type=self.model_type
+        )
+        return seminar_conclusion, judge_triplet
+
     def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
-        for filename, code in self.phase_env["code"].items():
-            if filename not in self.phase_env["unit_test_files"]:
-                continue
-            placeholders = self.phase_env.copy()
-            placeholders["code"] = f"{filename}\n{code}"
-            placeholders["unit_test_filename"] = f"test_{filename}"
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env, placeholders["unit_test_filename"])
-        chat_env = self.update_chat_env_overall(chat_env)
-        return chat_env
-
-
-class UnitTestCodeReviewComment(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.codes.codebooks,
-                               "unit_test_codes": chat_env.unit_test_codes.codebooks
-                               })
-
-    def update_chat_env(self, chat_env, filename) -> ChatEnv:
-        if not isinstance(chat_env.env_dict.get('unit_test_review_comments'), dict):
-            chat_env.env_dict['unit_test_review_comments'] = {}
-        chat_env.env_dict['unit_test_review_comments'][filename] = self.seminar_conclusion
-        self.phase_env["unit_test_review_comments"] = chat_env.env_dict['unit_test_review_comments']
-        return chat_env
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=20),
-        stop=stop_after_attempt(6)
-    )
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        for filename in self.phase_env["codes"]:
-            if f"test_{filename}" not in self.phase_env["unit_test_codes"]:
-                continue
-            placeholders = {
-                "task": self.phase_env['task'],
-                "language": self.phase_env['language'],
-                "code": self.phase_env["codes"][filename],
-                "unit_test_code": self.phase_env["unit_test_codes"][f"test_{filename}"],
+        if self.phase_env["cycle_index"] != 1:
+            return chat_env
+        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets
+                          if not triplet.is_complete and triplet.need_unit_test]
+        if not active_triplets:
+            return chat_env
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
+            future_to_triplet = {
+                executor.submit(
+                    self._process_single_triplet, chat_env, triplet, need_reflect, chat_turn_limit
+                ): triplet for triplet in active_triplets
             }
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env, filename)
-        return chat_env
-
-
-class UnitTestCodeReviewModification(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.codes.codebooks,
-                               "unit_test_codes": chat_env.unit_test_codes.codebooks,
-                               "unit_test_review_comments": chat_env.env_dict['unit_test_review_comments']})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.update_unit_test_codes(self.seminar_conclusion)
-        return chat_env
-
-    def update_chat_env_overall(self, chat_env):
-        chat_env.rewrite_unit_test_codes("Write Unit Test #" + str(self.phase_env["cycle_index"]) + " Finished")
-        return chat_env
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=20),
-        stop=stop_after_attempt(6)
-    )
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        for filename in self.phase_env["codes"]:
-            unit_test_filename = f"test_{filename}"
-            if unit_test_filename not in self.phase_env["unit_test_review_comments"]:
-                continue
-            placeholders = {
-                "task": self.phase_env["task"],
-                "language": self.phase_env["language"],
-                "code": self.phase_env["codes"][filename],
-                "unit_test_code": self.phase_env["unit_test_codes"][unit_test_filename],
-                "unit_test_review_comments": self.phase_env["unit_test_review_comments"][unit_test_filename],
-                "unit_test_filename": unit_test_filename
-            }
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env)
-        chat_env = self.update_chat_env_overall(chat_env)
+            for future in concurrent.futures.as_completed(future_to_triplet):
+                result = future.result()
+                self.seminar_conclusion, judge_triplet = result
+                chat_env = self.update_chat_env(chat_env, judge_triplet)
         return chat_env
 
 
@@ -1369,247 +658,92 @@ class UnitTestExecution(Phase):
 
     def update_phase_env(self, chat_env):
         self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "codes": chat_env.codes.codebooks,
-                               "unit_test_codes": chat_env.unit_test_codes.codebooks,
-                               "unit_test_flag": False})
-
-    def update_chat_env(self, chat_env, filename, unit_test_report) -> ChatEnv:
-        if not isinstance(chat_env.env_dict.get('unit_test_report'), dict):
-            chat_env.env_dict['unit_test_report'] = {}
-        if not isinstance(chat_env.env_dict.get('unit_test_summary'), dict):
-            chat_env.env_dict['unit_test_summary'] = {}
-        if self.phase_env["unit_test_flag"]:
-            chat_env.env_dict['unit_test_flag'] = True
-            return chat_env
-        chat_env.env_dict['unit_test_flag'] = False
-        chat_env.env_dict['unit_test_report'][filename] = unit_test_report
-        chat_env.env_dict['unit_test_summary'][filename] = self.seminar_conclusion
-        return chat_env
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=20),
-        stop=stop_after_attempt(6)
-    )
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        pass_flag = True
-        for filename in self.phase_env["codes"]:
-            if f"test_{filename}" not in self.phase_env["unit_test_codes"]:
-                continue
-            (exist_bugs_flag, unit_test_report) = chat_env.run_test_code(f"test_{filename}")
-            if not exist_bugs_flag:
-                continue
-            pass_flag = False
-            placeholders = {
-                "task": self.phase_env["task"],
-                "code": self.phase_env["codes"][filename],
-                "unit_test_code": self.phase_env["unit_test_codes"][f"test_{filename}"],
-                "unit_test_report": unit_test_report,
-            }
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env, filename, unit_test_report)
-        if pass_flag:
-            self.phase_env["unit_test_flag"] = True
-            chat_env = self.update_chat_env(chat_env, None, None)
-        return chat_env
-
-
-class UnitTestModification(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.codes.codebooks,
-                               "unit_test_codes": chat_env.unit_test_codes.codebooks,
-                               "unit_test_report": chat_env.env_dict['unit_test_report'],
-                               "unit_test_summary": chat_env.env_dict['unit_test_summary'],
-                               "unit_test_flag": chat_env.env_dict['unit_test_flag']})
-
-    def update_chat_env(self, chat_env):
-        if "```".lower() in self.seminar_conclusion.lower():
-            test_code_blocks = []
-            normal_code_blocks = []
-            regex = r"(.+?)\n```.*?\n(.*?)```"
-            matches = re.finditer(regex, self.seminar_conclusion, re.DOTALL)
-            for match in matches:
-                code = match.group(2)
-                group1 = match.group(1)
-                filename = self._extract_filename_from_line(group1)
-                if filename == "":
-                    filename = self._extract_filename_from_code(code)
-                if not filename:
-                    continue
-                formatted_block = f"{filename}\n```\n{code}\n```"
-                if "test_".lower() in filename.lower():
-                    test_code_blocks.append(formatted_block)
-                else:
-                    normal_code_blocks.append(formatted_block)
-            if test_code_blocks:
-                chat_env.update_unit_test_codes("\n\n".join(test_code_blocks))
-            if normal_code_blocks:
-                chat_env.update_codes("\n\n".join(normal_code_blocks))
-
-        chat_env.env_dict['last_phase_name'] = self.phase_name
-        return chat_env
-
-    def update_chat_env_overall(self, chat_env):
-        chat_env.rewrite_codes("Unit Test #" + str(self.phase_env["cycle_index"]) + " Finished")
-        chat_env.rewrite_unit_test_codes("Unit Test #" + str(self.phase_env["cycle_index"]) + " Finished")
-        return chat_env
-
-    @retry(
-        wait=wait_random_exponential(min=1, max=20),
-        stop=stop_after_attempt(6)
-    )
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        self.update_phase_env(chat_env)
-        for filename in self.phase_env["codes"]:
-            if filename not in self.phase_env["unit_test_report"]:
-                continue
-            placeholders = {
-                "task": self.phase_env["task"],
-                "language": self.phase_env["language"],
-                "code": self.phase_env["codes"][filename],
-                "unit_test_code": self.phase_env["unit_test_codes"][f"test_{filename}"],
-                "unit_test_report": self.phase_env["unit_test_report"][filename],
-                "unit_test_summary": self.phase_env["unit_test_summary"][filename],
-                "filename": filename,
-                "unit_test_filename": f"test_{filename}"
-            }
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env)
-        chat_env = self.update_chat_env_overall(chat_env)
-        return chat_env
-
-
-class CodeUpdateReview(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        # 针对不同的前置phase，更新comments字段
-        # 后续添加新的前置phase，需要在前置phase的update_chat_env方法中设置chat_env.env_dict['last_phase_name'] = self.phase_name
-        previous_phase = chat_env.env_dict.get('last_phase_name')
-        if previous_phase is None:
-            raise ValueError("No previous phase found in chat environment.")
-
-        comments = ""
-        if previous_phase == "CodeReviewModification":
-            comments = chat_env.env_dict["review_comments"]
-        elif previous_phase == "SimpleTaskReviewModification":
-            comments = chat_env.env_dict["simple_task_review_comments"]
-        elif previous_phase == "UnitTestModification":
-            for filename in chat_env.env_dict["unit_test_summary"]:
-                comments += f"Comments on {filename}:\n{chat_env.env_dict['unit_test_summary'][filename]}\n\n"
-        elif previous_phase == "DetailedTaskReviewModification":
-            for task_item, detailed_task_review_comments in chat_env.env_dict['detailed_task_review_comments'].items():
-                if "<INFO> PASS".lower() in detailed_task_review_comments.lower():
-                    continue
-                comments += f"Comments on \"{task_item}\":\n{detailed_task_review_comments.split('<INFO> FAIL')[0].strip()}\n\n"
-
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "previous_codes": chat_env.get_previous_codes(),
-                               "comments": comments,
-                               "diff": chat_env.get_diff()})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        if "<INFO> Finished".lower() in self.seminar_conclusion.lower():
-            if self.seminar_conclusion.split("<INFO> Finished")[0].strip() == "":
-                return chat_env
-        if "```".lower() in self.seminar_conclusion.lower():
-            test_code_blocks = []
-            normal_code_blocks = []
-            regex = r"(.+?)\n```.*?\n(.*?)```"
-            matches = re.finditer(regex, self.seminar_conclusion, re.DOTALL)
-            for match in matches:
-                code = match.group(2)
-                group1 = match.group(1)
-                filename = self._extract_filename_from_line(group1)
-                if filename == "":
-                    filename = self._extract_filename_from_code(code)
-                if not filename:
-                    continue
-                formatted_block = f"{filename}\n```\n{code}\n```"
-
-                if "test_".lower() in filename.lower():
-                    test_code_blocks.append(formatted_block)
-                else:
-                    normal_code_blocks.append(formatted_block)
-            if test_code_blocks:
-                chat_env.update_unit_test_codes("\n\n".join(test_code_blocks))
-                chat_env.rewrite_unit_test_codes("Code Update Review #" + str(self.phase_env["cycle_index"]) + " Finished")
-            if normal_code_blocks:
-                chat_env.update_codes("\n\n".join(normal_code_blocks))
-                chat_env.rewrite_codes("Code Update Review #" + str(self.phase_env["cycle_index"]) + " Finished")
-
-        # 删除last_phase_name，防止错误调用
-        chat_env.env_dict.pop('last_phase_name', None)
-
-        return chat_env
-
-
-class EnvironmentDoc(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
                                "modality": chat_env.env_dict['modality'],
-                               "ideas": chat_env.env_dict['ideas'],
-                               "language": chat_env.env_dict['language'],
-                               "codes": chat_env.get_codes()})
-
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env._update_requirements(self.seminar_conclusion)
-        chat_env.rewrite_requirements()
-        log_visualize(
-            "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
-        return chat_env
-
-
-class Manual(Phase):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
-                               "modality": chat_env.env_dict['modality'],
-                               "ideas": chat_env.env_dict['ideas'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "requirements": chat_env.get_requirements()})
+                               "judge_triplet": chat_env.env_dict['judge_triplet'],})
 
-    def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env._update_manuals(self.seminar_conclusion)
-        chat_env.rewrite_manuals()
+    def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
+        judge_triplet.unit_test_analysis = self.seminar_conclusion
+        return chat_env
+
+    @retry(
+        wait=wait_random_exponential(min=1, max=20),
+        stop=stop_after_attempt(6)
+    )
+    def _process_single_triplet(self, chat_env, judge_triplet, index, need_reflect, chat_turn_limit):
+        test_filename = f"test_for_subtask_{index}.py"
+        test_filepath = os.path.join(chat_env.env_dict["directory"], test_filename)
+        
+        with open(test_filepath, "w", encoding="utf-8") as f:
+            f.write(judge_triplet.unit_test_code)
+        log_visualize(f"Unit test code written to: {test_filepath}")
+        
+        (exist_bugs_flag, unit_test_report) = chat_env.run_test_code(test_filename)
+        judge_triplet.unit_test_result = not exist_bugs_flag
+        judge_triplet.unit_test_report = unit_test_report
+        
+        if not exist_bugs_flag:
+            log_visualize(f"**[Test Info]**\n\nAI User (Software Test Engineer):\nUnit Test Pass!\n")
+            return None
+            
+        placeholders = {
+            "task": chat_env.env_dict['task_prompt'],
+            "modality": chat_env.env_dict['modality'],
+            "language": chat_env.env_dict['language'],
+            "codes": chat_env.get_codes(),
+            "task_item": judge_triplet.subtask,
+            "code_snippets": judge_triplet.code_snippets,
+            "unit_test_code": judge_triplet.unit_test_code,
+            "unit_test_report": unit_test_report,
+        }
+        
+        seminar_conclusion = self.chatting(
+            chat_env=chat_env,
+            task_prompt=chat_env.env_dict['task_prompt'],
+            need_reflect=need_reflect,
+            assistant_role_name=self.assistant_role_name,
+            user_role_name=self.user_role_name,
+            phase_prompt=self.phase_prompt,
+            phase_name=self.phase_name,
+            assistant_role_prompt=self.assistant_role_prompt,
+            user_role_prompt=self.user_role_prompt,
+            chat_turn_limit=chat_turn_limit,
+            placeholders=placeholders,
+            memory=chat_env.memory,
+            model_type=self.model_type
+        )
+        
+        conclusion = CodeParser.parse_blocks(seminar_conclusion)
+        if conclusion.get("Problem Source") is None or conclusion.get("Analysis") is None or conclusion.get("Code Modification") is None:
+            raise ValueError("Invalid seminar conclusion format.")
+            
+        return seminar_conclusion, judge_triplet
+
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        self.update_phase_env(chat_env)
+        active_triplets = [
+            (index, triplet) for index, triplet in enumerate(self.phase_env["judge_triplet"].triplets)
+            if not triplet.is_complete and triplet.need_unit_test and triplet.unit_test_code
+        ]
+        if not active_triplets:
+            return chat_env
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
+            future_to_triplet = {
+                executor.submit(
+                    self._process_single_triplet,
+                    chat_env,
+                    triplet,
+                    index,
+                    need_reflect,
+                    chat_turn_limit
+                ): (index, triplet) for index, triplet in active_triplets
+            }
+            for future in concurrent.futures.as_completed(future_to_triplet):
+                result = future.result()
+                if result is not None:
+                    self.seminar_conclusion, judge_triplet = result
+                    chat_env = self.update_chat_env(chat_env, judge_triplet)
         return chat_env
 
 
@@ -1618,12 +752,17 @@ class TaskDecomposition(Phase):
         super().__init__(**kwargs)
 
     def update_phase_env(self, chat_env):
-        self.phase_env.update({"task": chat_env.env_dict['task_prompt']})
+        if not isinstance(chat_env.env_dict.get('judge_triplet'), JudgeTripletList):
+            chat_env.env_dict['judge_triplet'] = JudgeTripletList()
+        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
+                               "judge_triplet": chat_env.env_dict['judge_triplet']})
 
     def update_chat_env(self, chat_env) -> ChatEnv:
-        chat_env.env_dict['task_list'] = self._parse_list(self.seminar_conclusion)
-        if not chat_env.env_dict['task_list']:
+        task_list = self._parse_list(self.seminar_conclusion)
+        if not task_list:
             raise ValueError("No valid task list found in the seminar conclusion.")
+        for subtask in task_list:
+            chat_env.env_dict['judge_triplet'].triplets.append(JudgeTriplet(subtask=subtask))
         return chat_env
 
 
@@ -1632,18 +771,13 @@ class CodeLocalization(Phase):
         super().__init__(**kwargs)
 
     def update_phase_env(self, chat_env):
-        if not isinstance(chat_env.env_dict.get('detailed_task_review_comments'), dict):
-            chat_env.env_dict['detailed_task_review_comments'] = {}
         self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "task_list": chat_env.env_dict['task_list'],
-                               "detailed_task_review_comments": chat_env.env_dict['detailed_task_review_comments']})
+                               "judge_triplet": chat_env.env_dict['judge_triplet']})
 
-    def update_chat_env(self, chat_env, task_item) -> ChatEnv:
-        if not isinstance(chat_env.env_dict.get('code_snippets'), dict):
-            chat_env.env_dict['code_snippets'] = {}
+    def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
         if "```".lower() in self.seminar_conclusion.lower():
             code_blocks = []
             regex = r"(.+?)\n```.*?\n(.*?)```"
@@ -1658,9 +792,9 @@ class CodeLocalization(Phase):
                     continue
                 formatted_block = f"{filename}\n```\n{code}\n```"
                 code_blocks.append(formatted_block)
-            chat_env.env_dict['code_snippets'][task_item] = "\n\n".join(code_blocks)
+            judge_triplet.code_snippets = "\n\n".join(code_blocks)
         elif "<INFO> Not found".lower() in self.seminar_conclusion.lower():
-            chat_env.env_dict['code_snippets'][task_item] = "Not found"
+            judge_triplet.code_snippets = "Not found"
         else:
             raise ValueError("No valid code snippets or <INFO> token found.")
         return chat_env
@@ -1669,34 +803,47 @@ class CodeLocalization(Phase):
         wait=wait_random_exponential(min=1, max=20),
         stop=stop_after_attempt(6)
     )
+    def _process_single_triplet(self, chat_env, judge_triplet, need_reflect, chat_turn_limit): 
+        placeholders = {
+            "task": self.phase_env['task'],
+            "modality": self.phase_env['modality'],
+            "language": self.phase_env['language'],
+            "codes": self.phase_env["codes"],
+            "task_item": judge_triplet.subtask
+        }
+        seminar_conclusion = self.chatting(
+            chat_env=chat_env,
+            task_prompt=chat_env.env_dict['task_prompt'],
+            need_reflect=need_reflect,
+            assistant_role_name=self.assistant_role_name,
+            user_role_name=self.user_role_name,
+            phase_prompt=self.phase_prompt,
+            phase_name=self.phase_name,
+            assistant_role_prompt=self.assistant_role_prompt,
+            user_role_prompt=self.user_role_prompt,
+            chat_turn_limit=chat_turn_limit,
+            placeholders=placeholders,
+            memory=chat_env.memory,
+            model_type=self.model_type
+        )
+        return seminar_conclusion, judge_triplet
+
     def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
-        for task_item in self.phase_env["task_list"]:
-            detailed_task_review_comments = self.phase_env["detailed_task_review_comments"].get(task_item, "")
-            if "<INFO> PASS".lower() in detailed_task_review_comments.lower():
-                continue
-            placeholders = {
-                "task": self.phase_env['task'],
-                "modality": self.phase_env['modality'],
-                "language": self.phase_env['language'],
-                "codes": self.phase_env["codes"],
-                "task_item": task_item
+        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets 
+                          if not triplet.is_complete]
+        if not active_triplets:
+            return chat_env
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
+            future_to_triplet = {
+                executor.submit(
+                    self._process_single_triplet, chat_env, triplet, need_reflect, chat_turn_limit
+                ): triplet for triplet in active_triplets
             }
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env, task_item)
+            for future in concurrent.futures.as_completed(future_to_triplet):
+                result = future.result()
+                self.seminar_conclusion, judge_triplet = result
+                chat_env = self.update_chat_env(chat_env, judge_triplet)
         return chat_env
 
 
@@ -1705,18 +852,104 @@ class DetailedTaskReviewComment(Phase):
         super().__init__(**kwargs)
 
     def update_phase_env(self, chat_env):
-        if not isinstance(chat_env.env_dict.get('detailed_task_review_comments'), dict):
-            chat_env.env_dict['detailed_task_review_comments'] = {}
         self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "task_list": chat_env.env_dict['task_list'],
-                               "code_snippets": chat_env.env_dict['code_snippets'],
-                               "detailed_task_review_comments": chat_env.env_dict['detailed_task_review_comments']})
+                               "judge_triplet": chat_env.env_dict['judge_triplet'],})
 
-    def update_chat_env(self, chat_env, task_item) -> ChatEnv:
-        chat_env.env_dict['detailed_task_review_comments'][task_item] = self.seminar_conclusion
+    def update_chat_env(self, chat_env, judge_triplet, conclusion) -> ChatEnv:
+        judge_triplet.review_comments = conclusion["Code Review Comment"]
+        judge_triplet.review_result = "pass" in conclusion["Code Review Result"].lower()
+        judge_triplet.need_unit_test = "true" in conclusion["Unit Test Necessity"].lower()
+        return chat_env
+
+    @retry(
+        wait=wait_random_exponential(min=1, max=20),
+        stop=stop_after_attempt(6)
+    )
+    def _process_single_triplet(self, chat_env, judge_triplet, need_reflect, chat_turn_limit):
+        placeholders = {
+            "task": self.phase_env['task'],
+            "modality": self.phase_env['modality'],
+            "language": self.phase_env['language'],
+            "codes": self.phase_env["codes"],
+            "task_item": judge_triplet.subtask,
+            "code_snippets": judge_triplet.code_snippets
+        }
+        seminar_conclusion = self.chatting(
+            chat_env=chat_env,
+            task_prompt=chat_env.env_dict['task_prompt'],
+            need_reflect=need_reflect,
+            assistant_role_name=self.assistant_role_name,
+            user_role_name=self.user_role_name,
+            phase_prompt=self.phase_prompt,
+            phase_name=self.phase_name,
+            assistant_role_prompt=self.assistant_role_prompt,
+            user_role_prompt=self.user_role_prompt,
+            chat_turn_limit=chat_turn_limit,
+            placeholders=placeholders,
+            memory=chat_env.memory,
+            model_type=self.model_type
+        )
+        conclusion = CodeParser.parse_blocks(seminar_conclusion)
+        if conclusion.get("Code Review Comment") is None or conclusion.get("Code Review Result") is None or conclusion.get("Unit Test Necessity") is None:
+            raise ValueError("Invalid seminar conclusion format.")
+        return conclusion, judge_triplet
+
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        self.update_phase_env(chat_env)
+        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets 
+                          if not triplet.is_complete]
+        if not active_triplets:
+            return chat_env
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
+            future_to_triplet = {
+                executor.submit(
+                    self._process_single_triplet, chat_env, triplet, need_reflect, chat_turn_limit
+                ): triplet for triplet in active_triplets
+            }
+            for future in concurrent.futures.as_completed(future_to_triplet):
+                result = future.result()
+                conclusion, judge_triplet = result
+                chat_env = self.update_chat_env(chat_env, judge_triplet, conclusion)
+        return chat_env
+
+
+class ModificationPlanGeneration(Phase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        combined_evidence = ""
+        for judge_triplet in chat_env.env_dict['judge_triplet'].triplets:
+            if judge_triplet.is_complete:
+                continue
+            triplet_evidence = ""
+            if not judge_triplet.review_result:
+                triplet_evidence += f">>> [Reference] Code Review Comment:\n\n{judge_triplet.review_comments}\n\n"
+            if not judge_triplet.need_unit_test or not judge_triplet.unit_test_code:
+                continue
+            if not judge_triplet.unit_test_result:
+                conclusion = CodeParser.parse_blocks(judge_triplet.unit_test_analysis)
+                if "Source Code".lower() in conclusion["Problem Source"].lower():
+                    triplet_evidence += f">>> [Reference] Unit Test Report:\n\n{judge_triplet.unit_test_report}\n\n"
+                    analysis = f"## Analysis\n{conclusion['Analysis']}\n## Code Modification\n{conclusion['Code Modification']}\n\n"
+                    triplet_evidence += f">>> [Reference] Unit Test Analysis:\n\n{analysis}\n\n"
+            if triplet_evidence.strip():
+                if combined_evidence:
+                    combined_evidence += f"--------------------------------------------------\n\n"
+                combined_evidence += f">>> [Key Evidence] Subtask:\n\n{judge_triplet.subtask}\n\n"
+                combined_evidence += triplet_evidence
+
+        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
+                               "modality": chat_env.env_dict['modality'],
+                               "language": chat_env.env_dict['language'],
+                               "codes": chat_env.get_codes(),
+                               "evidence": combined_evidence})
+        
+    def update_chat_env(self, chat_env) -> ChatEnv:
+        chat_env.env_dict['modification_plan'] = self.seminar_conclusion
         return chat_env
 
     @retry(
@@ -1725,57 +958,144 @@ class DetailedTaskReviewComment(Phase):
     )
     def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
-        for task_item in self.phase_env["task_list"]:
-            detailed_task_review_comments = self.phase_env["detailed_task_review_comments"].get(task_item, "")
-            if "<INFO> PASS".lower() in detailed_task_review_comments.lower():
-                continue
-            placeholders = {
-                "task": self.phase_env['task'],
-                "modality": self.phase_env['modality'],
-                "language": self.phase_env['language'],
-                "codes": self.phase_env["codes"],
-                "task_item": task_item,
-                "code_snippet": chat_env.env_dict['code_snippets'][task_item]
-            }
-            self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
-                              task_prompt=chat_env.env_dict['task_prompt'],
-                              need_reflect=need_reflect,
-                              assistant_role_name=self.assistant_role_name,
-                              user_role_name=self.user_role_name,
-                              phase_prompt=self.phase_prompt,
-                              phase_name=self.phase_name,
-                              assistant_role_prompt=self.assistant_role_prompt,
-                              user_role_prompt=self.user_role_prompt,
-                              chat_turn_limit=chat_turn_limit,
-                              placeholders=placeholders,
-                              memory=chat_env.memory,
-                              model_type=self.model_type)
-            chat_env = self.update_chat_env(chat_env, task_item)
-        # for task_item in chat_env.env_dict['detailed_task_review_comments']:
-        #     print(f"Task Item: {task_item}\nComment: {chat_env.env_dict['detailed_task_review_comments'][task_item]}\n")
+        if not self.phase_env.get("evidence", "").strip():
+            chat_env.env_dict['modification_plan'] = ""
+            return chat_env
+        self.seminar_conclusion = \
+            self.chatting(chat_env=chat_env,
+                          task_prompt=chat_env.env_dict['task_prompt'],
+                          need_reflect=need_reflect,
+                          assistant_role_name=self.assistant_role_name,
+                          user_role_name=self.user_role_name,
+                          phase_prompt=self.phase_prompt,
+                          phase_name=self.phase_name,
+                          assistant_role_prompt=self.assistant_role_prompt,
+                          user_role_prompt=self.user_role_prompt,
+                          chat_turn_limit=chat_turn_limit,
+                          placeholders=self.phase_env,
+                          memory=chat_env.memory,
+                          model_type=self.model_type)
+        chat_env = self.update_chat_env(chat_env)
         return chat_env
 
 
-class DetailedTaskReviewModification(Phase):
+class UnitTestCodeModification(Phase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     def update_phase_env(self, chat_env):
-        detailed_task_review_comments = ""
-        for task_item, comments in chat_env.env_dict['detailed_task_review_comments'].items():
-            if "<INFO> PASS".lower() in comments.lower():
-                continue
-            detailed_task_review_comments += f"Comments on \"{task_item}\":\n{comments.split('<INFO> FAIL')[0].strip()}\n\n"
         self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "comments": detailed_task_review_comments})
+                               "judge_triplet": chat_env.env_dict['judge_triplet']})
+        
+    def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
+        try:
+            judge_triplet.unit_test_code = CodeParser.parse_code(block="", text=self.seminar_conclusion)
+        except ValueError as e:
+            log_visualize(f"Error parsing unit test code: {e}")
+        return chat_env
+    
+    @retry(
+        wait=wait_random_exponential(min=1, max=20),
+        stop=stop_after_attempt(6)
+    )
+    def _process_single_triplet(self, chat_env, judge_triplet, unit_test_analysis, need_reflect, chat_turn_limit):
+        placeholders = {
+            "task": self.phase_env['task'],
+            "modality": self.phase_env['modality'],
+            "language": self.phase_env['language'],
+            "codes": self.phase_env["codes"],
+            "task_item": judge_triplet.subtask,
+            "code_snippets": judge_triplet.code_snippets,
+            "unit_test_code": judge_triplet.unit_test_code,
+            "unit_test_analysis": unit_test_analysis
+        }
+        seminar_conclusion = self.chatting(
+            chat_env=chat_env,
+            task_prompt=chat_env.env_dict['task_prompt'],
+            need_reflect=need_reflect,
+            assistant_role_name=self.assistant_role_name,
+            user_role_name=self.user_role_name,
+            phase_prompt=self.phase_prompt,
+            phase_name=self.phase_name,
+            assistant_role_prompt=self.assistant_role_prompt,
+            user_role_prompt=self.user_role_prompt,
+            chat_turn_limit=chat_turn_limit,
+            placeholders=placeholders,
+            memory=chat_env.memory,
+            model_type=self.model_type
+        )
+        return seminar_conclusion, judge_triplet
+
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        self.update_phase_env(chat_env)
+        active_triplets = []
+        for judge_triplet in self.phase_env["judge_triplet"].triplets:
+            if judge_triplet.is_complete or (not judge_triplet.need_unit_test) or (not judge_triplet.unit_test_code) or judge_triplet.unit_test_result:
+                continue
+            conclusion = CodeParser.parse_blocks(judge_triplet.unit_test_analysis)
+            if "Unit Test Code".lower() not in conclusion["Code Modification"].lower():
+                continue
+            unit_test_analysis = f"##Unit Test Report\n{judge_triplet.unit_test_report}\n## Analysis\n{conclusion['Analysis']}\n## Code Modification\n{conclusion['Code Modification']}\n"
+            active_triplets.append((judge_triplet, unit_test_analysis))
+        if not active_triplets:
+            return chat_env
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
+            futures = []
+            for judge_triplet, unit_test_analysis in active_triplets:
+                futures.append(executor.submit(self._process_single_triplet, chat_env, judge_triplet, unit_test_analysis, need_reflect, chat_turn_limit))
+            results = concurrent.futures.wait(futures)
+        for future in results.done:
+            seminar_conclusion, judge_triplet = future.result()
+            self.seminar_conclusion = seminar_conclusion
+            chat_env = self.update_chat_env(chat_env, judge_triplet)
+        return chat_env
+
+
+class UnifiedCodeModification(Phase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        self.phase_env.update({"task": chat_env.env_dict['task_prompt'],
+                               "modality": chat_env.env_dict['modality'],
+                               "language": chat_env.env_dict['language'],
+                               "codes": chat_env.get_codes(),
+                               "modification_plan": chat_env.env_dict['modification_plan']})
 
     def update_chat_env(self, chat_env) -> ChatEnv:
         if "```".lower() in self.seminar_conclusion.lower():
             chat_env.update_codes(self.seminar_conclusion)
-            chat_env.rewrite_codes("Detailed Task Review #" + str(self.phase_env["cycle_index"]) + " Finished")
+            chat_env.rewrite_codes("Unified Review #" + str(self.phase_env["cycle_index"]) + " Finished")
+            log_visualize("**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
         chat_env.env_dict['last_phase_name'] = self.phase_name
+        return chat_env
+
+    @retry(
+        wait=wait_random_exponential(min=1, max=20),
+        stop=stop_after_attempt(6)
+    )
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        self.update_phase_env(chat_env)
+        if not self.phase_env.get("modification_plan", "").strip():
+            self.seminar_conclusion = ""
+            chat_env = self.update_chat_env(chat_env)
+            return chat_env
+        self.seminar_conclusion = \
+            self.chatting(chat_env=chat_env,
+                          task_prompt=chat_env.env_dict['task_prompt'],
+                          need_reflect=need_reflect,
+                          assistant_role_name=self.assistant_role_name,
+                          user_role_name=self.user_role_name,
+                          phase_prompt=self.phase_prompt,
+                          phase_name=self.phase_name,
+                          assistant_role_prompt=self.assistant_role_prompt,
+                          user_role_prompt=self.user_role_prompt,
+                          chat_turn_limit=chat_turn_limit,
+                          placeholders=self.phase_env,
+                          memory=chat_env.memory,
+                          model_type=self.model_type)
+        chat_env = self.update_chat_env(chat_env)
         return chat_env
