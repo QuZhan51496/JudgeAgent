@@ -60,6 +60,7 @@ class ModelType(Enum):
     CLAUDE_SONNET_4 = "claude-sonnet-4-20250514"
     DEEPSEEK_V3 = "deepseek-v3-0324"
     GEMINI_2_5_PRO = "gemini-2.5-pro-preview-05-06"
+    GEMINI_2_5_FLASH = "gemini-2.5-flash-preview-04-17"
 
     STUB = "stub"
 

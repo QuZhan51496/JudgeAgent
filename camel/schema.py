@@ -45,3 +45,24 @@ class DependencyContract(BaseContext):
 
 class DependencyNetwork(BaseContext):
     graph: List[DependencyContract] = Field(default_factory=list)
+
+class JudgeTriplet(BaseContext):
+    subtask: str = ""
+    code_snippets: str = ""
+    review_result: bool = False
+    review_comments: str = ""
+    need_unit_test: bool = False
+    unit_test_code: str = ""
+    unit_test_result: bool = False
+    unit_test_report: str = ""
+    unit_test_analysis: str = ""
+    
+    @property
+    def is_complete(self) -> bool:
+        if self.review_result:
+            if (not self.need_unit_test) or (self.need_unit_test and self.unit_test_result):
+                return True
+        return False
+
+class JudgeTripletList(BaseContext):
+    triplets: List[JudgeTriplet] = Field(default_factory=list)

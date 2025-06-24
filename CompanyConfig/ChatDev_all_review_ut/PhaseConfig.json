@@ -690,15 +690,15 @@
       "Error Summary of Test Report:",
       "\"{unit_test_summary}\"",
       "",
-      "As the {assistant_role}, your task is to modify the code based on the error summary from the test report. Let's think step by step to review the test report and error summary, then identify and fix the problematic code. Output the modified code and the corresponding explanations for each fix.",
-      "Note that the file must strictly follow a markdown code block format, where the following tokens must be replaced: \"DOCSTRING\" is a string literal specified in source code that is used to document a specific segment of code, and \"CODE\" is the modified code. Format:",
+      "In the software, the file must strictly follow a markdown code block format, where the following tokens must be replaced such that \"DOCSTRING\" is a string literal specified in source code that is used to document a specific segment of code, and \"CODE\" is the original code. Format:",
       "FILENAME: \"{filename}\" / \"{unit_test_filename}\" (depending on whether the problematic code is from the source code or the unit test code)",
       "```{language}",
       "'''",
       "DOCSTRING",
       "'''",
       "CODE",
-      "```"
+      "```",
+      "As the {assistant_role}, your task is to modify the code based on the error summary from the test report. Let's think step by step to review the test report and error summary, then identify and fix the problematic code. Return all codes strictly following the required format."
     ]
   },
   "CodeUpdateReview": {
