@@ -83,9 +83,15 @@
             ]
         },
         {
+            "phase": "CodeClean",
+            "phaseType": "SimplePhase",
+            "max_turn_step": 1,
+            "need_reflect": "False"
+        },
+        {
             "phase": "Test",
             "phaseType": "ComposedPhase",
-            "cycleNum": 3,
+            "cycleNum": 5,
             "Composition": [{
                     "phase": "TestErrorSummary",
                     "phaseType": "SimplePhase",

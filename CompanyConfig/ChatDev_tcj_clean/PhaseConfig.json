@@ -311,5 +311,10 @@
       "```",
       "As the {assistant_role}, to satisfy the new user's demand and make the software creative, executive and robust, you should modify corresponding codes according to the Modification Plan. Then, output the full and complete codes with all bugs fixed based on the Modification Plan. Return all codes strictly following the required format."
     ]
+  },
+  "CodeClean": {
+    "assistant_role_name": "Programmer",
+    "user_role_name": "Chief Technology Officer",
+    "phase_prompt": []
   }
 }

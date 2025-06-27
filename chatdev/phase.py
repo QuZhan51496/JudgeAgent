@@ -3,12 +3,8 @@ import re
 from abc import ABC, abstractmethod
 
 import json
-import pickle
 import ast
 import concurrent.futures
-from pydantic import BaseModel
-from typing import List, Optional
-from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from camel.agents import RolePlaying
@@ -18,8 +14,7 @@ from chatdev.chat_env import ChatEnv
 from chatdev.statistics import get_info
 from chatdev.utils import log_visualize, log_arguments
 
-from camel.dev_graph import DevGraph
-from camel.schema import Dependency, DependencyContract, DependencyNetwork, JudgeTriplet, JudgeTripletList
+from camel.schema import JudgeTriplet, JudgeTripletList
 from chatdev.utils import CodeParser
 
 
@@ -58,30 +53,19 @@ class Phase(ABC):
         self._model_type = model_type
         self._judge_model_type = judge_model_type
         self.log_filepath = log_filepath
-        self.complete_output_filter = ["CodeReviewComment", "CodeReviewSummary", "ReviewOnReview", "ReviewConsensus", "SimpleTaskReviewComment", "CodeUpdateReview", "DetailedTaskReviewComment", "CodeLocalization"]
-        self.judge_phase_filter = ["CodeReviewComment", 
-                                   "CodeReviewModification", 
-                                   "TestErrorSummary", 
-                                   "TestModification",
-                                   "TaskDecomposition",
-                                   "CodeLocalization",
-                                   "DetailedTaskReviewComment",
-                                   "DetailedTaskReviewModification",
-                                   "SimpleTaskReviewComment",
-                                   "SimpleTaskReviewModification",
-                                   "AnalyzeDependencies",
-                                   "EnhancedCodeReview",
-                                   "CodeReviewSummary",
-                                   "ReviewOnReview",
-                                   "ReviewConsensus",
-                                   "EnhancedCodeReviewModification",
-                                   "UnitTestDetermination",
-                                   "UnitTestCoding",
-                                   "UnitTestCodeReviewComment",
-                                   "UnitTestCodeReviewModification",
-                                   "UnitTestExecution",
-                                   "UnitTestModification",
-                                   "CodeUpdateReview"]
+        self.complete_output_filter = ["DetailedTaskReviewComment", "CodeLocalization"]
+        self.judge_phase_filter = [
+            "TaskDecomposition",
+            "CodeLocalization",
+            "DetailedTaskReviewComment",
+            "UnitTestCoding",
+            "UnitTestExecution",
+            "ModificationPlanGeneration",
+            "UnitTestCodeModification",
+            "UnifiedCodeModification",
+            "CodeClean",
+            "TestErrorSummary",
+            "TestModification",]
 
     @property
     def model_type(self):
@@ -411,11 +395,11 @@ class Phase(ABC):
             try:
                 return json.loads(list_str)
             except (json.JSONDecodeError, ValueError):
-                pass  
+                pass
         try:
             return ast.literal_eval(info_content)
         except (ValueError, SyntaxError):
-            pass    
+            pass
         return []
 
 
@@ -592,7 +576,7 @@ class UnitTestCoding(Phase):
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "judge_triplet": chat_env.env_dict['judge_triplet'],})
+                               "judge_triplet": chat_env.env_dict['judge_triplet'], })
 
     def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
         try:
@@ -636,7 +620,7 @@ class UnitTestCoding(Phase):
         if self.phase_env["cycle_index"] != 1:
             return chat_env
         active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets
-                          if not triplet.is_complete and triplet.need_unit_test]
+                           if not triplet.is_complete and triplet.need_unit_test]
         if not active_triplets:
             return chat_env
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
@@ -661,7 +645,7 @@ class UnitTestExecution(Phase):
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "judge_triplet": chat_env.env_dict['judge_triplet'],})
+                               "judge_triplet": chat_env.env_dict['judge_triplet'], })
 
     def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
         judge_triplet.unit_test_analysis = self.seminar_conclusion
@@ -674,19 +658,19 @@ class UnitTestExecution(Phase):
     def _process_single_triplet(self, chat_env, judge_triplet, index, need_reflect, chat_turn_limit):
         test_filename = f"test_for_subtask_{index}.py"
         test_filepath = os.path.join(chat_env.env_dict["directory"], test_filename)
-        
+
         with open(test_filepath, "w", encoding="utf-8") as f:
             f.write(judge_triplet.unit_test_code)
         log_visualize(f"Unit test code written to: {test_filepath}")
-        
+
         (exist_bugs_flag, unit_test_report) = chat_env.run_test_code(test_filename)
         judge_triplet.unit_test_result = not exist_bugs_flag
         judge_triplet.unit_test_report = unit_test_report
-        
+
         if not exist_bugs_flag:
             log_visualize(f"**[Test Info]**\n\nAI User (Software Test Engineer):\nUnit Test Pass!\n")
             return None
-            
+
         placeholders = {
             "task": chat_env.env_dict['task_prompt'],
             "modality": chat_env.env_dict['modality'],
@@ -697,7 +681,7 @@ class UnitTestExecution(Phase):
             "unit_test_code": judge_triplet.unit_test_code,
             "unit_test_report": unit_test_report,
         }
-        
+
         seminar_conclusion = self.chatting(
             chat_env=chat_env,
             task_prompt=chat_env.env_dict['task_prompt'],
@@ -713,11 +697,11 @@ class UnitTestExecution(Phase):
             memory=chat_env.memory,
             model_type=self.model_type
         )
-        
+
         conclusion = CodeParser.parse_blocks(seminar_conclusion)
         if conclusion.get("Problem Source") is None or conclusion.get("Analysis") is None or conclusion.get("Code Modification") is None:
             raise ValueError("Invalid seminar conclusion format.")
-            
+
         return seminar_conclusion, judge_triplet
 
     def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
@@ -803,7 +787,7 @@ class CodeLocalization(Phase):
         wait=wait_random_exponential(min=1, max=20),
         stop=stop_after_attempt(6)
     )
-    def _process_single_triplet(self, chat_env, judge_triplet, need_reflect, chat_turn_limit): 
+    def _process_single_triplet(self, chat_env, judge_triplet, need_reflect, chat_turn_limit):
         placeholders = {
             "task": self.phase_env['task'],
             "modality": self.phase_env['modality'],
@@ -830,8 +814,8 @@ class CodeLocalization(Phase):
 
     def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
-        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets 
-                          if not triplet.is_complete]
+        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets
+                           if not triplet.is_complete]
         if not active_triplets:
             return chat_env
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
@@ -856,7 +840,7 @@ class DetailedTaskReviewComment(Phase):
                                "modality": chat_env.env_dict['modality'],
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
-                               "judge_triplet": chat_env.env_dict['judge_triplet'],})
+                               "judge_triplet": chat_env.env_dict['judge_triplet'], })
 
     def update_chat_env(self, chat_env, judge_triplet, conclusion) -> ChatEnv:
         judge_triplet.review_comments = conclusion["Code Review Comment"]
@@ -899,8 +883,8 @@ class DetailedTaskReviewComment(Phase):
 
     def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
-        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets 
-                          if not triplet.is_complete]
+        active_triplets = [triplet for triplet in self.phase_env["judge_triplet"].triplets
+                           if not triplet.is_complete]
         if not active_triplets:
             return chat_env
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_triplets)) as executor:
@@ -947,7 +931,7 @@ class ModificationPlanGeneration(Phase):
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
                                "evidence": combined_evidence})
-        
+
     def update_chat_env(self, chat_env) -> ChatEnv:
         chat_env.env_dict['modification_plan'] = self.seminar_conclusion
         return chat_env
@@ -989,14 +973,14 @@ class UnitTestCodeModification(Phase):
                                "language": chat_env.env_dict['language'],
                                "codes": chat_env.get_codes(),
                                "judge_triplet": chat_env.env_dict['judge_triplet']})
-        
+
     def update_chat_env(self, chat_env, judge_triplet) -> ChatEnv:
         try:
             judge_triplet.unit_test_code = CodeParser.parse_code(block="", text=self.seminar_conclusion)
         except ValueError as e:
             log_visualize(f"Error parsing unit test code: {e}")
         return chat_env
-    
+
     @retry(
         wait=wait_random_exponential(min=1, max=20),
         stop=stop_after_attempt(6)
@@ -1098,4 +1082,55 @@ class UnifiedCodeModification(Phase):
                           memory=chat_env.memory,
                           model_type=self.model_type)
         chat_env = self.update_chat_env(chat_env)
+        return chat_env
+
+
+class CodeClean(Phase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def _analyze_ast_placeholders(source_code: str) -> str:
+        try:
+            tree = ast.parse(source_code)
+        except SyntaxError:
+            return source_code
+
+        class PlaceholderRemover(ast.NodeTransformer):
+            def visit_FunctionDef(self, node):
+                node = self.generic_visit(node)
+                if (not node.body or (len(node.body) == 1 and isinstance(node.body[0], ast.Pass))):
+                    return None
+                return node
+
+            def visit_ClassDef(self, node):
+                node = self.generic_visit(node)
+                if not node.body or (len(node.body) == 1 and isinstance(node.body[0], ast.Pass)):
+                    return None
+                return node
+
+        transformer = PlaceholderRemover()
+        modified_tree = transformer.visit(tree)
+        ast.fix_missing_locations(modified_tree)
+
+        return ast.unparse(modified_tree)
+
+    def update_phase_env(self, chat_env):
+        self.phase_env.update({"codebooks": chat_env.codes.codebooks})
+
+    def update_chat_env(self, chat_env):
+        chat_env.rewrite_codes("Code Clean up Finished")
+        log_visualize("**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
+        return chat_env
+
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        self.update_phase_env(chat_env)
+        for filename, code_content in self.phase_env["codebooks"].items():
+            if not code_content.strip():
+                file_path = os.path.join(chat_env.env_dict['directory'], filename)
+                os.remove(file_path)
+                del self.phase_env["codebooks"][filename]
+                continue
+            self.phase_env["codebooks"][filename] = self._analyze_ast_placeholders(code_content)
+        self.update_chat_env(chat_env)
         return chat_env
