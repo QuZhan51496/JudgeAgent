@@ -7,6 +7,7 @@ import markdown
 import inspect
 from camel.messages.system_messages import SystemMessage
 from visualizer.app import send_msg
+import ast
 
 
 def now():
@@ -128,13 +129,14 @@ class CodeParser:
     def parse_code(cls, block: str, text: str, lang: str = "") -> str:
         if block:
             text = cls.parse_block(block, text)
-        pattern = rf"```{lang}.*?\s+(.*?)```"
+
+        pattern = rf"```{lang}.*?\s+(.*?)(?:```|$)"
         match = re.search(pattern, text, re.DOTALL)
         if match:
-            code = match.group(1)
-        else:
-            raise ValueError(f"{pattern} not match!")
-        return code
+            code = match.group(1).lstrip()
+            return code
+
+        raise ValueError(f"Can not find code block by {pattern} in the text.")
 
     @classmethod
     def parse_str(cls, block: str, text: str, lang: str = ""):
