@@ -790,7 +790,7 @@ class CodeLocalization(Phase):
         elif "<INFO> Not found".lower() in self.seminar_conclusion.lower():
             judge_triplet.code_snippets = "Not found"
         else:
-            raise ValueError("No valid code snippets or <INFO> token found.")
+            judge_triplet.code_snippets = self.seminar_conclusion.strip()
         return chat_env
 
     @retry(
