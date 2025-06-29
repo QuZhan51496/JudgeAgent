@@ -427,12 +427,22 @@ class LanguageChoose(Phase):
                                "ideas": chat_env.env_dict['ideas']})
 
     def update_chat_env(self, chat_env) -> ChatEnv:
-        if len(self.seminar_conclusion) > 0 and "<INFO>" in self.seminar_conclusion:
-            chat_env.env_dict['language'] = self.seminar_conclusion.split("<INFO>")[-1].lower().replace(".", "").strip()
-        elif len(self.seminar_conclusion) > 0:
-            chat_env.env_dict['language'] = self.seminar_conclusion
-        else:
-            chat_env.env_dict['language'] = "Python"
+        # if len(self.seminar_conclusion) > 0 and "<INFO>" in self.seminar_conclusion:
+        #     chat_env.env_dict['language'] = self.seminar_conclusion.split("<INFO>")[-1].lower().replace(".", "").strip()
+        # elif len(self.seminar_conclusion) > 0:
+        #     chat_env.env_dict['language'] = self.seminar_conclusion
+        # else:
+        #     chat_env.env_dict['language'] = "Python"
+        chat_env.env_dict['language'] = "python"
+        return chat_env
+
+    @retry(
+        wait=wait_random_exponential(min=1, max=20),
+        stop=stop_after_attempt(6)
+    )
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        self.update_phase_env(chat_env)
+        chat_env = self.update_chat_env(chat_env)
         return chat_env
 
 
