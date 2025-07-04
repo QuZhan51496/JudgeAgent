@@ -122,6 +122,7 @@ args2type = {'GPT_3_5_TURBO': ModelType.GPT_3_5_TURBO,
             'DEEPSEEK_V3': ModelType.DEEPSEEK_V3, # deepseek-v3-0324
             'GEMINI_2_5_PRO': ModelType.GEMINI_2_5_PRO,
             'GEMINI_2_5_FLASH': ModelType.GEMINI_2_5_FLASH, # gemini-2.5-flash-preview-04-17
+            'GEMINI_2_5_FLASH_ALL': ModelType.GEMINI_2_5_FLASH_ALL, # gemini-2.5-flash-all
              }
 if openai_new_api:
     args2type['GPT_3_5_TURBO'] = ModelType.GPT_3_5_TURBO_NEW

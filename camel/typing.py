@@ -61,6 +61,7 @@ class ModelType(Enum):
     DEEPSEEK_V3 = "deepseek-v3-0324"
     GEMINI_2_5_PRO = "gemini-2.5-pro-preview-05-06"
     GEMINI_2_5_FLASH = "gemini-2.5-flash-preview-04-17"
+    GEMINI_2_5_FLASH_ALL = "gemini-2.5-flash-all"
 
     STUB = "stub"
 
