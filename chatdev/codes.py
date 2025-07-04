@@ -16,7 +16,8 @@ class Codes:
 
         def extract_filename_from_line(lines):
             file_name = ""
-            for candidate in re.finditer(r"(\w+\.\w+)", lines, re.DOTALL):
+            # for candidate in re.finditer(r"(\w+\.\w+)", lines, re.DOTALL):
+            for candidate in re.finditer(r"([^\s]+\.\w+)", lines, re.DOTALL):
                 file_name = candidate.group()
                 file_name = file_name.lower()
             return file_name
@@ -89,6 +90,7 @@ class Codes:
 
         for filename in self.codebooks.keys():
             filepath = os.path.join(directory, filename)
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as writer:
                 writer.write(self.codebooks[filename])
                 rewrite_codes_content += os.path.join(directory, filename) + " Wrote\n"
@@ -132,6 +134,7 @@ class Codes:
 
         for filename in self.codebooks.keys():
             filepath = os.path.join(directory, filename)
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as writer:
                 writer.write(self.codebooks[filename])
 

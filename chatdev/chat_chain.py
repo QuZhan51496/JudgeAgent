@@ -68,13 +68,17 @@ class ChatChain:
         self.chat_turn_limit_default = 10
 
         # init ChatEnv
-        self.chat_env_config = ChatEnvConfig(clear_structure=check_bool(self.config["clear_structure"]),
-                                             gui_design=check_bool(self.config["gui_design"]),
-                                             git_management=check_bool(self.config["git_management"]),
-                                             incremental_develop=check_bool(self.config["incremental_develop"]),
-                                             background_prompt=self.config["background_prompt"],
-                                             with_memory=check_bool(self.config["with_memory"]))
-                                             
+        self.chat_env_config = ChatEnvConfig(
+            language=self.config["language"] if self.config.get("language") else "Python",
+            data_path=self.config["data_path"].format(project_name=project_name) if self.config.get("data_path") else None,
+            clear_structure=check_bool(self.config["clear_structure"]),
+            gui_design=check_bool(self.config["gui_design"]),
+            git_management=check_bool(self.config["git_management"]),
+            incremental_develop=check_bool(self.config["incremental_develop"]),
+            background_prompt=self.config["background_prompt"],
+            with_memory=check_bool(self.config["with_memory"])
+        )
+
         self.chat_env = ChatEnv(self.chat_env_config)
 
         # the user input prompt will be self-improved (if set "self_improve": "True" in ChatChainConfig.json)

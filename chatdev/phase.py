@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 import json
 import ast
 import concurrent.futures
+import shutil
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from camel.agents import RolePlaying
@@ -433,7 +434,7 @@ class LanguageChoose(Phase):
         #     chat_env.env_dict['language'] = self.seminar_conclusion
         # else:
         #     chat_env.env_dict['language'] = "Python"
-        chat_env.env_dict['language'] = "python"
+        chat_env.env_dict['language'] = chat_env.config.language
         return chat_env
 
     @retry(
@@ -1143,4 +1144,21 @@ class CodeClean(Phase):
                 continue
             self.phase_env["codebooks"][filename] = self._analyze_ast_placeholders(code_content)
         self.update_chat_env(chat_env)
+        return chat_env
+
+
+class DataPreparation(Phase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def update_phase_env(self, chat_env):
+        pass
+
+    def update_chat_env(self, chat_env) -> ChatEnv:
+        pass
+
+    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+        target_dir = os.path.join(chat_env.env_dict['directory'], "data")
+        os.makedirs(target_dir, exist_ok=True)
+        shutil.copytree(chat_env.config.data_path, target_dir, dirs_exist_ok=True)
         return chat_env

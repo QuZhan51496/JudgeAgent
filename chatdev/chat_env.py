@@ -25,12 +25,17 @@ except ImportError:
 
 
 class ChatEnvConfig:
-    def __init__(self, clear_structure,
+    def __init__(self,
+                 clear_structure,
                  gui_design,
                  git_management,
                  incremental_develop,
                  background_prompt,
-                 with_memory):
+                 with_memory,
+                 language,
+                 data_path):
+        self.language = language  # Programming language used in the software, default is Python
+        self.data_path = data_path
         self.clear_structure = clear_structure  # Whether to clear non-software files in the WareHouse and cache files in generated software path
         self.gui_design = gui_design  # Encourage ChatDev generate software with GUI
         self.git_management = git_management  # Whether to use git to manage the creation and changes of generated software
